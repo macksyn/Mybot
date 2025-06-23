@@ -1,51 +1,67 @@
-const { default: makeWASocket, DisconnectReason, useSingleFileAuthState } = require("@whiskeysockets/baileys");
-const { loadCommands } = require("./lib/commandLoader");
-const { connect: dbConnect } = require("./database");
-const config = require("./config");
+const { default: makeWASocket, useSingleFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
+const { MongoClient } = require("mongodb");
+const fs = require("fs");
+const path = require("path");
+const P = require("pino");
 
-function startBot(auth) {
-  const sock = makeWASocket({ auth });
-  sock.commands = new Map();
-  sock.aliases = new Map();
-  loadCommands(sock);
+require("dotenv").config();
+const MONGODB_URI = process.env.MONGODB_URI;
+const OWNER_NUMBER = process.env.OWNER_NUMBER;
+const PREFIX = process.env.BOT_PREFIX || "!";
 
-  sock.ev.on("connection.update", (u) => {
-    const { connection, lastDisconnect } = u;
-    if (connection === "open") console.log("✅ Bot connected");
-    else if (connection === "close") {
-      if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-        startBot(auth);
-      } else console.log("🛑 Connection closed by user");
+// Auth
+const authFilePath = "./session.auth.json";
+const { state, saveState } = useSingleFileAuthState(authFilePath);
+
+// MongoDB
+let db;
+MongoClient.connect(MONGODB_URI)
+  .then(client => {
+    db = client.db("lusshbot");
+    console.log("📦 MongoDB connected");
+  })
+  .catch(err => console.error("❌ MongoDB connection error:", err));
+
+async function init() {
+  const { version } = await fetchLatestBaileysVersion();
+  const sock = makeWASocket({
+    version,
+    printQRInTerminal: false,
+    auth: state,
+    logger: P({ level: "silent" }),
+    browser: ["Lussh MD", "Safari", "1.0"]
+  });
+
+  sock.ev.on("creds.update", saveState);
+
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) console.log("📷 QR code generated");
+    if (connection === "close") {
+      const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("❌ Disconnected. Reconnecting:", shouldReconnect);
+      if (shouldReconnect) init();
+    } else if (connection === "open") {
+      console.log("✅ Bot connected as", sock.user?.id);
     }
   });
 
-  sock.ev.on("messages.upsert", async (msgUp) => {
-    const msg = msgUp.messages[0];
-    if (!msg.message || msg.key.fromMe || !msg.key.remoteJid.endsWith(".net")) return;
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-    if (!text.startsWith(config.prefix)) return;
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify" || !messages[0]?.message) return;
+    const msg = messages[0];
+    const body = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+    const from = msg.key.remoteJid;
 
-    const [cmdName, ...args] = text.slice(config.prefix.length).trim().split(/\s+/);
-    const command = sock.commands.get(cmdName) || sock.commands.get(sock.aliases.get(cmdName));
-    if (!command) return;
-
-    try {
-      await command.execute({ sock, msg, args, reply: async (resp) => {
-        await sock.sendMessage(msg.key.remoteJid, { text: resp }, { quoted: msg });
-      }, db: sock });
-    } catch (err) {
-      console.error("Command error", err);
+    if (body.startsWith(PREFIX)) {
+      const command = body.slice(PREFIX.length).trim().toLowerCase();
+      if (command === "ping") {
+        await sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg });
+      }
     }
   });
 
   return sock;
-}
-
-async function init() {
-  await dbConnect();
-  const { state, saveState } = useSingleFileAuthState("./auth_info.json");
-  const sock = startBot({ state });
-  sock.ev.on("creds.update", saveState);
 }
 
 module.exports = { init };
