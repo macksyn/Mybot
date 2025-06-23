@@ -1,13 +1,15 @@
-
 {
-  "name": "mybot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
+  "name": "lussh-md",
+  "version": "0.1.0",
+  "main": "bot.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.0"
+    "@whiskeysockets/baileys": "^6.6.0",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.1",
+    "mongodb": "^5.8.0",
+    "dotenv": "^16.0.3"
   }
 }
