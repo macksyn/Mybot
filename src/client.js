@@ -4,6 +4,7 @@ import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
 import { MessageHandler } from './handlers/messageHandler.js';
 import { EventHandler } from './handlers/eventHandler.js';
+import connectToMongoDB, { db } from './database/mongodb.js';
 
 let isConnecting = false;
 let reconnectAttempts = 0;
@@ -18,6 +19,30 @@ export async function createBot() {
     isConnecting = true;
     
     try {
+        // 🗄️ CONNECT TO MONGODB FIRST
+        logger.info('🚀 Initializing bot systems...');
+        
+        const mongoConnected = await connectToMongoDB();
+        if (!mongoConnected) {
+            logger.error('❌ Failed to connect to MongoDB. Cannot start bot.');
+            process.exit(1);
+        }
+        
+        // Display database connection info
+        const dbInfo = db.getConnectionInfo();
+        logger.info(`✅ Database connection established`);
+        logger.info(`📊 Database Name: ${dbInfo.databaseName}`);
+        logger.info(`🔗 Connection Status: ${dbInfo.connected ? 'Connected' : 'Disconnected'}`);
+        logger.info(`📡 Ready State: ${dbInfo.readyState === 1 ? 'Ready' : 'Not Ready'}`);
+        
+        // Get database stats
+        const stats = await db.getStats();
+        if (stats) {
+            logger.info(`📋 Collections: ${stats.collections}`);
+            logger.info(`📦 Total Objects: ${stats.objects}`);
+            logger.info(`💾 Data Size: ${(stats.dataSize / 1024 / 1024).toFixed(2)} MB`);
+        }
+        
         const { state, saveCreds } = await useMultiFileAuthState('./sessions');
         const { version, isLatest } = await fetchLatestBaileysVersion();
         
@@ -131,6 +156,7 @@ export async function createBot() {
                 logger.info('✅ Connected to WhatsApp successfully!');
                 logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
                 logger.info(`👤 Connected as: ${sock.user?.name || 'Unknown'} (${sock.user?.id || 'Unknown'})`);
+                logger.info(`🗄️  Database: ${db.isConnected() ? 'MongoDB Connected ✅' : 'Database Disconnected ❌'}`);
                 
                 // Send startup message to owner
                 if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
@@ -139,6 +165,8 @@ export async function createBot() {
                         await delay(2000);
                         
                         const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
+                        const dbStats = await db.getStats();
+                        
                         await sock.sendMessage(ownerJid, {
                             text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
                                   `📅 Started: ${new Date().toLocaleString()}\n` +
@@ -146,6 +174,11 @@ export async function createBot() {
                                   `🌐 Environment: ${config.NODE_ENV}\n` +
                                   `⚡ Node.js: ${process.version}\n` +
                                   `👤 Connected as: ${sock.user?.name || 'Bot'}\n\n` +
+                                  `🗄️  *DATABASE STATUS*\n` +
+                                  `📊 MongoDB: ${db.isConnected() ? '✅ Connected' : '❌ Disconnected'}\n` +
+                                  `🏷️  Database: ${config.DATABASE_NAME}\n` +
+                                  `📋 Collections: ${dbStats?.collections || 'N/A'}\n` +
+                                  `📦 Objects: ${dbStats?.objects || 'N/A'}\n\n` +
                                   `✅ All systems operational!\n` +
                                   `Type ${config.PREFIX}help to see available commands.`
                         });
@@ -187,6 +220,18 @@ export async function createBot() {
                 logger.error('Error handling reaction:', error);
             }
         });
+        
+        // Database health check interval
+        setInterval(async () => {
+            try {
+                if (!db.isConnected()) {
+                    logger.warn('⚠️  Database connection lost, attempting to reconnect...');
+                    await connectToMongoDB();
+                }
+            } catch (error) {
+                logger.error('Database health check failed:', error);
+            }
+        }, 30000); // Check every 30 seconds
         
         // Presence update with connection check
         const presenceInterval = setInterval(async () => {
