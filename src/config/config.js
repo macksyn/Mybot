@@ -5,9 +5,9 @@ export const config = {
     OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
     TIMEZONE: process.env.TIMEZONE || 'UTC',
     
-    // Authentication Method
-    USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
-    SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'true', // Default true
+    // Authentication Method - CHANGED: Now defaults to true for pairing code
+    USE_PAIRING_CODE: process.env.USE_PAIRING_CODE !== 'false', // Default true, set to 'false' to disable
+    SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'false', // Default true
     AUTO_RESTART_ON_LOGOUT: process.env.AUTO_RESTART_ON_LOGOUT === 'true',
     
     // Webhook for notifications (optional)
