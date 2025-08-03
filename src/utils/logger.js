@@ -69,6 +69,15 @@ if (config.LOG_TO_FILE) {
             logFormat
         )
     }));
+    // In your logger.js file, add checks like:
+const loggerConfig = {
+  transports: transports || [], // Ensure transports is not undefined
+  format: format || winston.format.simple(), // Ensure format is not undefined
+  // ... other config
+};
+
+console.log('Logger config:', loggerConfig); // Debug line
+const logger = winston.createLogger(loggerConfig);
     
     logger.add(new winston.transports.File({
         filename: 'logs/combined.log',
@@ -94,3 +103,13 @@ logger.child = (meta) => {
         transports: logger.transports
     });
 };
+
+// In your logger.js file, add checks like:
+const loggerConfig = {
+  transports: transports || [], // Ensure transports is not undefined
+  format: format || winston.format.simple(), // Ensure format is not undefined
+  // ... other config
+};
+
+console.log('Logger config:', loggerConfig); // Debug line
+const logger = winston.createLogger(loggerConfig);
