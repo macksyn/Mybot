@@ -32,36 +32,39 @@ export async function createBot() {
     const messageHandler = new MessageHandler(sock);
     const eventHandler = new EventHandler(sock);
     
+    // Check if we need to pair immediately
+    if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
+        logger.info('🔗 Bot not registered, generating pairing code...');
+        try {
+            // Clean phone number - remove all non-digits including the + sign
+            const phoneNumber = config.OWNER_NUMBER.replace(/\D/g, '');
+            logger.info(`📱 Requesting pairing code for: ${phoneNumber}`);
+            
+            const code = await sock.requestPairingCode(phoneNumber);
+            logger.info(`📱 Your pairing code: ${code}`);
+            logger.info(`📞 Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number instead`);
+            
+            // Send notification if webhook is configured
+            if (config.WEBHOOK_URL) {
+                await sendPairingCodeNotification(code, phoneNumber);
+            }
+        } catch (error) {
+            logger.error('Failed to generate pairing code:', error);
+            logger.info('Will wait for QR code instead...');
+        }
+    }
+    
     // Connection events
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        if (qr) {
-            if (config.USE_PAIRING_CODE && config.OWNER_NUMBER) {
-                // Use pairing code instead of QR
-                logger.info('🔗 Generating pairing code...');
-                try {
-                    const code = await sock.requestPairingCode(config.OWNER_NUMBER);
-                    logger.info(`📱 Your pairing code: ${code}`);
-                    logger.info(`📞 Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number instead`);
-                    
-                    // If we have a way to send notifications, send the pairing code
-                    if (config.WEBHOOK_URL) {
-                        await sendPairingCodeNotification(code);
-                    }
-                } catch (error) {
-                    logger.error('Failed to generate pairing code:', error);
-                    logger.info('Falling back to QR code...');
-                    qrcode.generate(qr, { small: true });
-                }
-            } else {
-                logger.info('📱 QR Code received, scan with WhatsApp:');
-                qrcode.generate(qr, { small: true });
-                
-                if (config.NODE_ENV === 'production') {
-                    logger.warn('⚠️  Running in production without pairing code setup!');
-                    logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
-                }
+        if (qr && (!config.USE_PAIRING_CODE || !config.OWNER_NUMBER)) {
+            logger.info('📱 QR Code received, scan with WhatsApp:');
+            qrcode.generate(qr, { small: true });
+            
+            if (config.NODE_ENV === 'production') {
+                logger.warn('⚠️  Running in production without pairing code setup!');
+                logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
             }
         }
         
@@ -91,7 +94,8 @@ export async function createBot() {
             // Send startup message to owner
             if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
                 try {
-                    await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, {
+                    const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
+                    await sock.sendMessage(ownerJid, {
                         text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
                               `📅 Started: ${new Date().toLocaleString()}\n` +
                               `🔧 Prefix: ${config.PREFIX}\n` +
@@ -140,7 +144,7 @@ export async function createBot() {
 }
 
 // Helper function to send pairing code notification
-async function sendPairingCodeNotification(code) {
+async function sendPairingCodeNotification(code, phoneNumber) {
     try {
         if (config.WEBHOOK_URL) {
             const response = await fetch(config.WEBHOOK_URL, {
@@ -151,6 +155,7 @@ async function sendPairingCodeNotification(code) {
                 body: JSON.stringify({
                     type: 'pairing_code',
                     code: code,
+                    phone_number: phoneNumber,
                     timestamp: new Date().toISOString(),
                     bot_name: config.BOT_NAME
                 })
