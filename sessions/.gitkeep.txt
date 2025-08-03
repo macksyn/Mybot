@@ -1,0 +1,3 @@
+# This file ensures the sessions directory is tracked by git
+# The actual session files will be ignored by .gitignore
+# but this directory structure is needed for the bot to work
