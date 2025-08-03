@@ -1,6 +1,23 @@
 import moment from 'moment';
 import { config } from '../config/config.js';
 
+// In src/utils/helpers.js
+export function formatDuration(milliseconds) {
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+// Make sure to export other functions you need as well
+
 // Rate limiting storage
 const rateLimitMap = new Map();
 
