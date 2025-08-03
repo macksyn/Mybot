@@ -1,0 +1,42 @@
+# Bot Configuration
+BOT_NAME=WhatsApp Bot
+PREFIX=!
+OWNER_NUMBER=1234567890
+TIMEZONE=Asia/Kolkata
+
+# Authentication Method
+USE_PAIRING_CODE=true
+SEND_STARTUP_MESSAGE=true
+AUTO_RESTART_ON_LOGOUT=false
+
+# Optional webhook for pairing code notifications
+WEBHOOK_URL=https://your-webhook-url.com/notify
+
+# API Keys (Optional - for enhanced features)
+OPENWEATHER_API_KEY=your_openweather_api_key_here
+QUOTE_API_KEY=your_quote_api_key_here
+
+# Database (Optional - for user data storage)
+DATABASE_URL=sqlite:./database.db
+
+# Environment
+NODE_ENV=production
+PORT=3000
+
+# Session Management
+SESSION_ID=whatsapp-bot-session
+
+# Security
+MAX_COMMANDS_PER_MINUTE=10
+ADMIN_NUMBERS=1234567890,0987654321
+
+# Features Toggle
+ENABLE_WEATHER=true
+ENABLE_JOKES=true
+ENABLE_QUOTES=true
+ENABLE_CALCULATOR=true
+ENABLE_ADMIN_COMMANDS=true
+
+# Logging
+LOG_LEVEL=info
+LOG_TO_FILE=true
