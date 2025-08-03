@@ -32,39 +32,51 @@ export async function createBot() {
     const messageHandler = new MessageHandler(sock);
     const eventHandler = new EventHandler(sock);
     
-    // Check if we need to pair immediately
-    if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
-        logger.info('🔗 Bot not registered, generating pairing code...');
-        try {
-            // Clean phone number - remove all non-digits including the + sign
-            const phoneNumber = config.OWNER_NUMBER.replace(/\D/g, '');
-            logger.info(`📱 Requesting pairing code for: ${phoneNumber}`);
-            
-            const code = await sock.requestPairingCode(phoneNumber);
-            logger.info(`📱 Your pairing code: ${code}`);
-            logger.info(`📞 Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number instead`);
-            
-            // Send notification if webhook is configured
-            if (config.WEBHOOK_URL) {
-                await sendPairingCodeNotification(code, phoneNumber);
-            }
-        } catch (error) {
-            logger.error('Failed to generate pairing code:', error);
-            logger.info('Will wait for QR code instead...');
-        }
-    }
+    // Track if we need pairing
+    const needsPairing = config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered;
     
     // Connection events
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        if (qr && (!config.USE_PAIRING_CODE || !config.OWNER_NUMBER)) {
-            logger.info('📱 QR Code received, scan with WhatsApp:');
-            qrcode.generate(qr, { small: true });
-            
-            if (config.NODE_ENV === 'production') {
-                logger.warn('⚠️  Running in production without pairing code setup!');
-                logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
+    // Connection events
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        // Handle pairing code generation when connection is ready
+        if (connection === 'connecting' && needsPairing) {
+            logger.info('🔗 Bot not registered, will generate pairing code when connected...');
+        }
+        
+        if (qr) {
+            if (needsPairing) {
+                // Generate pairing code instead of showing QR
+                logger.info('🔗 Generating pairing code...');
+                try {
+                    const phoneNumber = config.OWNER_NUMBER.replace(/\D/g, '');
+                    logger.info(`📱 Requesting pairing code for: ${phoneNumber}`);
+                    
+                    const code = await sock.requestPairingCode(phoneNumber);
+                    logger.info(`📱 Your pairing code: ${code}`);
+                    logger.info(`📞 Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number instead`);
+                    
+                    // Send notification if webhook is configured
+                    if (config.WEBHOOK_URL) {
+                        await sendPairingCodeNotification(code, phoneNumber);
+                    }
+                } catch (error) {
+                    logger.error('Failed to generate pairing code:', error);
+                    logger.info('Falling back to QR code...');
+                    qrcode.generate(qr, { small: true });
+                }
+            } else {
+                logger.info('📱 QR Code received, scan with WhatsApp:');
+                qrcode.generate(qr, { small: true });
+                
+                if (config.NODE_ENV === 'production') {
+                    logger.warn('⚠️  Running in production without pairing code setup!');
+                    logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
+                }
             }
         }
         
