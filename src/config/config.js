@@ -3,7 +3,7 @@ export const config = {
     BOT_NAME: process.env.BOT_NAME || 'Groq 🤖',
     PREFIX: process.env.PREFIX || '!',
     OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338', // Removed the + sign
-    TIMEZONE: process.env.TIMEZONE || 'UTC',
+    TIMEZONE: process.env.TIMEZONE || 'Africa/Lagos',
     
     // Authentication Method - CHANGED: Now defaults to true for pairing code
     USE_PAIRING_CODE: process.env.USE_PAIRING_CODE !== 'false', // Default true, set to 'false' to disable
@@ -17,10 +17,13 @@ export const config = {
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY || '',
     QUOTE_API_KEY: process.env.QUOTE_API_KEY || '',
     
-    // Local Database
-   // DATABASE_URL: process.env.DATABASE_URL || 'sqlite:./database.db',
-
-      DATABASE_URL: process.env.DATABASE_URL || 'postgresql://u11i5hbtqtvcnvv0zcyx:zcI2Y5ieUlQX8XwMSqwX0H5kyfwwIs@btepfz18wnkeydwmhmfi-postgresql.services.clever-cloud.com:50013/btepfz18wnkeydwmhmfi',
+    // MongoDB Database Configuration
+    MONGODB_URI: process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/whatsapp-bot',
+    DATABASE_NAME: process.env.DATABASE_NAME || 'whatsapp-bot',
+    
+    // Session Storage
+    USE_MONGODB_SESSIONS: process.env.USE_MONGODB_SESSIONS === 'true', // Set to true to store WhatsApp sessions in MongoDB
+    SESSION_COLLECTION: process.env.SESSION_COLLECTION || 'sessions',
     
     // Environment
     NODE_ENV: process.env.NODE_ENV || 'development',
@@ -65,6 +68,15 @@ export const config = {
             }
         }
         
+        // MongoDB validation
+        if (!this.MONGODB_URI) {
+            required.push('MONGODB_URI (MongoDB connection string required)');
+        }
+        
+        if (!this.DATABASE_NAME) {
+            required.push('DATABASE_NAME (Database name required)');
+        }
+        
         // Warnings for production
         if (this.NODE_ENV === 'production') {
             if (!this.OWNER_NUMBER) {
@@ -72,6 +84,9 @@ export const config = {
             }
             if (!this.USE_PAIRING_CODE) {
                 warnings.push('USE_PAIRING_CODE=false - QR code scanning required (not ideal for cloud deployment)');
+            }
+            if (this.MONGODB_URI.includes('localhost')) {
+                warnings.push('Using localhost MongoDB in production - consider using MongoDB Atlas or cloud database');
             }
         }
         
