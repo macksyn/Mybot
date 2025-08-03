@@ -39,10 +39,6 @@ export async function createBot() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-    // Connection events
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
         // Handle pairing code generation when connection is ready
         if (connection === 'connecting' && needsPairing) {
             logger.info('🔗 Bot not registered, will generate pairing code when connected...');
