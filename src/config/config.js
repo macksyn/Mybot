@@ -2,7 +2,7 @@ export const config = {
     // Bot Configuration
     BOT_NAME: process.env.BOT_NAME || 'Groq 🤖',
     PREFIX: process.env.PREFIX || '!',
-    OWNER_NUMBER: process.env.OWNER_NUMBER || '+2348166353338',
+    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338', // Removed the + sign
     TIMEZONE: process.env.TIMEZONE || 'UTC',
     
     // Authentication Method - CHANGED: Now defaults to true for pairing code
