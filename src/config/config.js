@@ -1,13 +1,13 @@
 export const config = {
     // Bot Configuration
-    BOT_NAME: process.env.BOT_NAME || 'WhatsApp Bot',
+    BOT_NAME: process.env.BOT_NAME || 'Groq 🤖',
     PREFIX: process.env.PREFIX || '!',
-    OWNER_NUMBER: process.env.OWNER_NUMBER || '',
+    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
     TIMEZONE: process.env.TIMEZONE || 'UTC',
     
     // Authentication Method
     USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
-    SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'false', // Default true
+    SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'true', // Default true
     AUTO_RESTART_ON_LOGOUT: process.env.AUTO_RESTART_ON_LOGOUT === 'true',
     
     // Webhook for notifications (optional)
