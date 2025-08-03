@@ -17,8 +17,10 @@ export const config = {
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY || '',
     QUOTE_API_KEY: process.env.QUOTE_API_KEY || '',
     
-    // Database
-    DATABASE_URL: process.env.DATABASE_URL || 'sqlite:./database.db',
+    // Local Database
+   // DATABASE_URL: process.env.DATABASE_URL || 'sqlite:./database.db',
+
+      DATABASE_URL: process.env.DATABASE_URL || 'postgresql://u11i5hbtqtvcnvv0zcyx:zcI2Y5ieUlQX8XwMSqwX0H5kyfwwIs@btepfz18wnkeydwmhmfi-postgresql.services.clever-cloud.com:50013/btepfz18wnkeydwmhmfi',
     
     // Environment
     NODE_ENV: process.env.NODE_ENV || 'development',
