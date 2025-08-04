@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import 'dotenv/config';
+console.log('🔍 MONGODB DIAGNOSTIC:');
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+console.log('DATABASE_NAME:', process.env.DATABASE_NAME);
+console.log('MONGODB_URI preview:', process.env.MONGODB_URI?.substring(0, 30) + '...');
 import http from 'http';
 import { createBot } from './client.js';
 import { logger } from './utils/logger.js';
