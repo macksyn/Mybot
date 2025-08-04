@@ -2,17 +2,17 @@ import { logger } from '../utils/logger.js';
 import { parseCommand, checkRateLimit, getMessageContent, getSenderId } from '../utils/helpers.js';
 import { config } from '../config/config.js';
 
-// Import plugins
+// Import plugins - Remove economy plugin temporarily to avoid import error
 import pingPlugin from '../plugins/ping.js';
 import helpPlugin from '../plugins/help.js';
 import infoPlugin from '../plugins/info.js';
-import weatherPlugin from '../plugins/weather.js';
-import jokePlugin from '../plugins/joke.js';
-import quotePlugin from '../plugins/quote.js';
-import calculatorPlugin from '../plugins/calculator.js';
-import adminPlugin from '../plugins/admin.js';
-import pairPlugin from '../plugins/pair.js';
-import economyPlugin from '../plugins/economy.js';
+// import weatherPlugin from '../plugins/weather.js';
+// import jokePlugin from '../plugins/joke.js';
+// import quotePlugin from '../plugins/quote.js';
+// import calculatorPlugin from '../plugins/calculator.js';
+// import adminPlugin from '../plugins/admin.js';
+// import pairPlugin from '../plugins/pair.js';
+// NOTE: Economy plugin will be loaded dynamically after database connection
 
 export class MessageHandler {
     constructor(sock) {
@@ -28,6 +28,8 @@ export class MessageHandler {
         this.plugins.set('info', infoPlugin);
         
         // Optional plugins based on configuration
+        // Temporarily disabled to avoid import errors
+        /*
         if (config.ENABLE_WEATHER) {
             this.plugins.set('weather', weatherPlugin);
         }
@@ -49,8 +51,41 @@ export class MessageHandler {
             this.plugins.set('admin', adminPlugin);
             this.plugins.set('pair', pairPlugin);
         }
+        */
         
         logger.info(`Loaded ${this.plugins.size} plugins`);
+    }
+    
+    // Dynamic plugin loading for economy after database connection
+    async loadEconomyPlugin() {
+        try {
+            // Import economy plugin dynamically
+            const { default: economyPlugin } = await import('../plugins/economy.js');
+            
+            // Add economy commands
+            const economyCommands = [
+                'balance', 'bal', 'wallet',
+                'send', 'transfer', 'pay',
+                'deposit', 'dep', 'withdraw', 'wd',
+                'work', 'daily', 'rob',
+                'gamble', 'bet', 'flip',
+                'leaderboard', 'lb', 'top',
+                'profile', 'stats',
+                'shop', 'buy', 'inventory', 'inv',
+                'clan', 'ecosettings'
+            ];
+            
+            // Map all economy commands to the same plugin
+            economyCommands.forEach(cmd => {
+                this.plugins.set(cmd, economyPlugin);
+            });
+            
+            logger.info('✅ Economy plugin loaded successfully');
+            logger.info(`📊 Total plugins: ${this.plugins.size}`);
+            
+        } catch (error) {
+            logger.error('❌ Failed to load economy plugin:', error);
+        }
     }
     
     async handle(messageUpdate) {
@@ -129,7 +164,7 @@ export class MessageHandler {
                 }
             };
             
-            logger.info(`Command executed: ${command} by ${senderId}`);
+            logger.info(`Command executed: ${command} by ${senderId.split('@')[0]}`);
             
             // Execute plugin
             await plugin.execute(context);
