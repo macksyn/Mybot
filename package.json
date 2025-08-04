@@ -1,12 +1,13 @@
 {
   "name": "whatsapp-bot",
   "version": "1.0.0",
-  "description": "A modern WhatsApp bot built with Baileys",
+  "description": "A modern WhatsApp bot built with Baileys and PostgreSQL",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "migrate": "node src/database/migrate.js",
     "build": "echo 'No build step required'",
     "lint": "eslint src/",
     "test": "echo 'No tests specified'"
@@ -16,7 +17,8 @@
     "bot",
     "baileys",
     "nodejs",
-    "automation"
+    "automation",
+    "postgresql"
   ],
   "author": "Your Name",
   "license": "MIT",
@@ -27,7 +29,7 @@
     "dotenv": "^16.3.1",
     "moment": "^2.29.4",
     "moment-timezone": "^0.5.45",
-    "mongoose": "^8.1.1",
+    "pg": "^8.11.3",
     "node-cron": "^3.0.3",
     "qrcode-terminal": "^0.12.0",
     "winston": "^3.11.0"
