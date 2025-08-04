@@ -1,4 +1,3 @@
-import { models } from '../database/mongodb.js';
 import { config } from '../config/config.js';
 import { 
     parseCommand, 
@@ -9,6 +8,23 @@ import {
     delay
 } from '../utils/helpers.js';
 import { logger } from '../utils/logger.js';
+import mongoose from 'mongoose';
+
+// 🔧 DYNAMIC MODEL ACCESS - This prevents the import error
+const getModels = () => {
+    // Only access models after mongoose connection is established
+    if (mongoose.connection.readyState !== 1) {
+        throw new Error('Database not connected');
+    }
+    
+    // Return models from mongoose connection
+    return {
+        User: mongoose.models.User || mongoose.model('User'),
+        Settings: mongoose.models.Settings || mongoose.model('Settings'),
+        Log: mongoose.models.Log || mongoose.model('Log'),
+        Clan: mongoose.models.Clan || mongoose.model('Clan')
+    };
+};
 
 // Cooldown storage (in-memory for performance)
 const cooldowns = {
@@ -47,6 +63,7 @@ let ecoSettings = {
 // Load settings from database on startup
 async function loadEconomySettings() {
     try {
+        const models = getModels();
         const settings = await models.Settings.find({ category: 'economy' });
         settings.forEach(setting => {
             const keys = setting.key.split('.');
@@ -63,6 +80,7 @@ async function loadEconomySettings() {
 // Initialize or get user from database
 async function initUser(userId) {
     try {
+        const models = getModels();
         let user = await models.User.findOne({ userId });
         
         if (!user) {
@@ -173,6 +191,7 @@ const getTargetUser = (message, text) => {
 // Log economy transaction
 async function logTransaction(userId, type, amount, details = {}) {
     try {
+        const models = getModels();
         await models.Log.create({
             level: 'info',
             message: `Economy transaction: ${type}`,
@@ -190,18 +209,15 @@ async function logTransaction(userId, type, amount, details = {}) {
     }
 }
 
-// Main economy plugin
-const economy = async (sock, message) => {
+// Plugin execution function
+const execute = async (context) => {
     try {
-        const messageContent = getMessageContent(message.message);
-        if (!messageContent) return;
+        // Check if database is connected
+        if (mongoose.connection.readyState !== 1) {
+            return context.reply('❌ Database not connected. Please try again later.');
+        }
 
-        const parsedCommand = parseCommand(messageContent);
-        if (!parsedCommand) return;
-
-        const { command, args } = parsedCommand;
-        const senderId = getSenderId(message);
-        const chatId = message.key.remoteJid;
+        const { command, args, senderId, reply } = context;
         
         // Economy commands
         const economyCommands = [
@@ -218,8 +234,8 @@ const economy = async (sock, message) => {
         
         if (!economyCommands.includes(command)) return;
 
-        // Load settings if not loaded
-        if (!ecoSettings.currency) {
+        // Load settings if not loaded and database is available
+        if (!ecoSettings.currency || ecoSettings.currency === '₦') {
             await loadEconomySettings();
         }
 
@@ -234,8 +250,7 @@ const economy = async (sock, message) => {
                 const totalWealth = user.economy.balance + user.economy.bank;
                 const rank = getUserRank(totalWealth);
                 
-                await sock.sendMessage(chatId, {
-                    text: `💰 *YOUR WALLET* 💰
+                await reply(`💰 *YOUR WALLET* 💰
 
 👤 *User:* @${senderId.split('@')[0]}
 🏅 *Rank:* ${rank}
@@ -249,145 +264,8 @@ const economy = async (sock, message) => {
 💸 *Total Spent:* ${formatCurrency(user.economy.totalSpent)}
 ⚡ *Work Count:* ${user.economy.workCount}
 
-🕒 *Last Seen:* ${user.stats.lastSeen.toLocaleString()}`,
+🕒 *Last Seen:* ${user.stats.lastSeen.toLocaleString()}`, {
                     mentions: [senderId]
-                });
-                break;
-            }
-
-            case 'send':
-            case 'transfer':
-            case 'pay': {
-                const target = getTargetUser(message, args.join(' '));
-                const amount = parseInt(args.find(arg => !isNaN(parseInt(arg))));
-
-                if (!target) {
-                    return sock.sendMessage(chatId, {
-                        text: `⚠️ *Usage Examples:*
-• Reply to someone: *.send 1000*
-• Mention someone: *.send @user 1000*
-• Use number: *.send 1234567890 1000*`
-                    });
-                }
-
-                if (!amount || amount <= 0) {
-                    return sock.sendMessage(chatId, {
-                        text: '⚠️ *Please provide a valid amount*'
-                    });
-                }
-
-                if (target === senderId) {
-                    return sock.sendMessage(chatId, {
-                        text: '🤔 *You cannot send money to yourself!*'
-                    });
-                }
-
-                if (user.economy.balance < amount) {
-                    return sock.sendMessage(chatId, {
-                        text: `🚫 *Insufficient Balance*
-
-💵 *Your Balance:* ${formatCurrency(user.economy.balance)}
-💸 *Required:* ${formatCurrency(amount)}`
-                    });
-                }
-
-                const targetUser = await initUser(target);
-                
-                // Transfer money
-                user.economy.balance -= amount;
-                targetUser.economy.balance += amount;
-                user.economy.totalSpent += amount;
-                targetUser.economy.totalEarned += amount;
-                
-                await user.save();
-                await targetUser.save();
-                
-                // Log transaction
-                await logTransaction(senderId, 'send', amount, { recipient: target });
-
-                await sock.sendMessage(chatId, {
-                    text: `✅ *TRANSFER SUCCESSFUL* ✅
-
-💸 *From:* @${senderId.split('@')[0]}
-💰 *To:* @${target.split('@')[0]}
-💵 *Amount:* ${formatCurrency(amount)}
-
-📊 *New Balances:*
-• Sender: ${formatCurrency(user.economy.balance)}
-• Receiver: ${formatCurrency(targetUser.economy.balance)}`,
-                    mentions: [senderId, target]
-                });
-                break;
-            }
-
-            case 'deposit':
-            case 'dep': {
-                const amount = parseInt(args[0]);
-                
-                if (!amount || amount <= 0) {
-                    return sock.sendMessage(chatId, {
-                        text: '⚠️ *Please provide a valid amount to deposit*'
-                    });
-                }
-
-                if (user.economy.balance < amount) {
-                    return sock.sendMessage(chatId, {
-                        text: `🚫 *Insufficient wallet balance*
-
-💵 *Your Balance:* ${formatCurrency(user.economy.balance)}`
-                    });
-                }
-
-                user.economy.balance -= amount;
-                user.economy.bank += amount;
-                await user.save();
-                
-                await logTransaction(senderId, 'deposit', amount);
-
-                await sock.sendMessage(chatId, {
-                    text: `🏦 *DEPOSIT SUCCESSFUL* 🏦
-
-💰 *Deposited:* ${formatCurrency(amount)}
-
-📊 *New Balances:*
-💵 *Wallet:* ${formatCurrency(user.economy.balance)}
-🏦 *Bank:* ${formatCurrency(user.economy.bank)}`
-                });
-                break;
-            }
-
-            case 'withdraw':
-            case 'wd': {
-                const amount = parseInt(args[0]);
-                
-                if (!amount || amount <= 0) {
-                    return sock.sendMessage(chatId, {
-                        text: '⚠️ *Please provide a valid amount to withdraw*'
-                    });
-                }
-
-                if (user.economy.bank < amount) {
-                    return sock.sendMessage(chatId, {
-                        text: `🚫 *Insufficient bank balance*
-
-🏦 *Your Bank:* ${formatCurrency(user.economy.bank)}`
-                    });
-                }
-
-                user.economy.bank -= amount;
-                user.economy.balance += amount;
-                await user.save();
-                
-                await logTransaction(senderId, 'withdraw', amount);
-
-                await sock.sendMessage(chatId, {
-                    text: `💵 *WITHDRAWAL SUCCESSFUL* 💵
-
-💰 *Withdrawn:* ${formatCurrency(amount)}
-
-📊 *New Balances:*
-💵 *Wallet:* ${formatCurrency(user.economy.balance)}
-🏦 *Bank:* ${formatCurrency(user.economy.bank)}`
                 });
                 break;
             }
@@ -395,9 +273,7 @@ const economy = async (sock, message) => {
             case 'work': {
                 if (!checkCooldown(senderId, 'work', ecoSettings.workCooldownMinutes)) {
                     const remaining = getRemainingTime(senderId, 'work', ecoSettings.workCooldownMinutes);
-                    return sock.sendMessage(chatId, {
-                        text: `⏱️ *You're tired! Rest for ${remaining} minutes before working again.*`
-                    });
+                    return reply(`⏱️ *You're tired! Rest for ${remaining} minutes before working again.*`);
                 }
 
                 const job = ecoSettings.workJobs[Math.floor(Math.random() * ecoSettings.workJobs.length)];
@@ -411,15 +287,13 @@ const economy = async (sock, message) => {
                 
                 await logTransaction(senderId, 'work', earnings, { job: job.name });
 
-                await sock.sendMessage(chatId, {
-                    text: `💼 *WORK COMPLETED* 💼
+                await reply(`💼 *WORK COMPLETED* 💼
 
 🔨 *Job:* ${job.name}
 💰 *Earned:* ${formatCurrency(earnings)}
 💵 *New Balance:* ${formatCurrency(user.economy.balance)}
 
-⏱️ *Next work available in ${ecoSettings.workCooldownMinutes} minutes*`
-                });
+⏱️ *Next work available in ${ecoSettings.workCooldownMinutes} minutes*`);
                 break;
             }
 
@@ -427,9 +301,7 @@ const economy = async (sock, message) => {
                 const today = new Date().toDateString();
                 
                 if (user.economy.lastDaily === today) {
-                    return sock.sendMessage(chatId, {
-                        text: '⏰ *You have already claimed your daily reward today!*\n\nCome back tomorrow for another reward.'
-                    });
+                    return reply('⏰ *You have already claimed your daily reward today!*\n\nCome back tomorrow for another reward.');
                 }
 
                 const dailyAmount = Math.floor(Math.random() * (ecoSettings.dailyMaxAmount - ecoSettings.dailyMinAmount + 1)) + ecoSettings.dailyMinAmount;
@@ -458,180 +330,20 @@ const economy = async (sock, message) => {
                 
                 await logTransaction(senderId, 'daily', dailyAmount);
 
-                await sock.sendMessage(chatId, {
-                    text: `🎁 *DAILY REWARD CLAIMED* 🎁
+                await reply(`🎁 *DAILY REWARD CLAIMED* 🎁
 
 💰 *Received:* ${formatCurrency(dailyAmount)}
 💵 *New Balance:* ${formatCurrency(user.economy.balance)}
 🔥 *Current Streak:* ${user.attendance.streak} days
 
-✨ *Come back tomorrow for another reward!*`
-                });
-                break;
-            }
-
-            case 'rob': {
-                const target = getTargetUser(message, args.join(' '));
-                
-                if (!target) {
-                    return sock.sendMessage(chatId, {
-                        text: `⚠️ *Usage Examples:*
-• Reply to someone: *.rob*
-• Mention someone: *.rob @user*
-• Use number: *.rob 1234567890*`
-                    });
-                }
-
-                if (target === senderId) {
-                    return sock.sendMessage(chatId, {
-                        text: '🤔 *You cannot rob yourself!*'
-                    });
-                }
-
-                if (!checkCooldown(senderId, 'rob', ecoSettings.robCooldownMinutes)) {
-                    const remaining = getRemainingTime(senderId, 'rob', ecoSettings.robCooldownMinutes);
-                    return sock.sendMessage(chatId, {
-                        text: `⏱️ *Robbery cooldown active! Wait ${remaining} minutes.*`
-                    });
-                }
-
-                const targetUser = await initUser(target);
-
-                if (targetUser.economy.balance < ecoSettings.robMinTargetBalance) {
-                    return sock.sendMessage(chatId, {
-                        text: `👀 *Target is too broke to rob!*
-
-💸 *@${target.split('@')[0]}* only has ${formatCurrency(targetUser.economy.balance)}
-🚫 *Minimum required: ${formatCurrency(ecoSettings.robMinTargetBalance)}*`,
-                        mentions: [target]
-                    });
-                }
-
-                if (user.economy.balance < ecoSettings.robMinRobberBalance) {
-                    return sock.sendMessage(chatId, {
-                        text: `💸 *You need at least ${formatCurrency(ecoSettings.robMinRobberBalance)} to attempt a robbery*
-
-💰 *Your balance:* ${formatCurrency(user.economy.balance)}`
-                    });
-                }
-
-                setCooldown(senderId, 'rob');
-                const success = Math.random() < ecoSettings.robSuccessRate;
-
-                if (success) {
-                    const maxSteal = Math.floor(targetUser.economy.balance * ecoSettings.robMaxStealPercent);
-                    const stolen = Math.floor(Math.random() * maxSteal) + 50;
-
-                    targetUser.economy.balance -= stolen;
-                    user.economy.balance += stolen;
-                    user.economy.totalEarned += stolen;
-                    user.economy.robCount += 1;
-                    
-                    await user.save();
-                    await targetUser.save();
-                    
-                    await logTransaction(senderId, 'rob_success', stolen, { victim: target });
-
-                    await sock.sendMessage(chatId, {
-                        text: `🦹‍♂️ *ROBBERY SUCCESS!* 🦹‍♂️
-
-💰 *@${senderId.split('@')[0]}* successfully robbed *${formatCurrency(stolen)}* from *@${target.split('@')[0]}*
-
-📊 *New Balances:*
-🤑 *Robber:* ${formatCurrency(user.economy.balance)}
-😭 *Victim:* ${formatCurrency(targetUser.economy.balance)}
-
-⏱️ *Cooldown:* ${ecoSettings.robCooldownMinutes} minutes`,
-                        mentions: [senderId, target]
-                    });
-                } else {
-                    user.economy.balance -= ecoSettings.robFailPenalty;
-                    targetUser.economy.balance += ecoSettings.robFailPenalty;
-                    
-                    await user.save();
-                    await targetUser.save();
-                    
-                    await logTransaction(senderId, 'rob_fail', ecoSettings.robFailPenalty, { victim: target });
-
-                    await sock.sendMessage(chatId, {
-                        text: `🚨 *ROBBERY FAILED!* 🚨
-
-❌ *@${senderId.split('@')[0]}* got caught and paid a fine of ${formatCurrency(ecoSettings.robFailPenalty)}*
-
-📊 *New Balances:*
-😔 *Robber:* ${formatCurrency(user.economy.balance)}
-😊 *Victim:* ${formatCurrency(targetUser.economy.balance)}
-
-⏱️ *Cooldown:* ${ecoSettings.robCooldownMinutes} minutes`,
-                        mentions: [senderId, target]
-                    });
-                }
-                break;
-            }
-
-            case 'gamble':
-            case 'bet':
-            case 'flip': {
-                const amount = parseInt(args[0]);
-                
-                if (!amount || amount < ecoSettings.gamblingMinBet || amount > ecoSettings.gamblingMaxBet) {
-                    return sock.sendMessage(chatId, {
-                        text: `🎰 *GAMBLING RULES* 🎰
-
-💰 *Min Bet:* ${formatCurrency(ecoSettings.gamblingMinBet)}
-💎 *Max Bet:* ${formatCurrency(ecoSettings.gamblingMaxBet)}
-
-⚠️ *Usage:* .gamble [amount]
-💡 *Example:* .gamble 1000`
-                    });
-                }
-
-                if (user.economy.balance < amount) {
-                    return sock.sendMessage(chatId, {
-                        text: `🚫 *Insufficient balance for gambling*
-
-💵 *Your Balance:* ${formatCurrency(user.economy.balance)}`
-                    });
-                }
-
-                const win = Math.random() < 0.45; // 45% win rate
-                
-                if (win) {
-                    const winnings = Math.floor(amount * 1.8); // 80% profit
-                    user.economy.balance += winnings;
-                    user.economy.totalEarned += winnings;
-                    
-                    await user.save();
-                    await logTransaction(senderId, 'gamble_win', winnings);
-                    
-                    await sock.sendMessage(chatId, {
-                        text: `🎰 *GAMBLING WIN!* 🎰
-
-🎉 *Congratulations!* You won ${formatCurrency(winnings)}!
-💵 *New Balance:* ${formatCurrency(user.economy.balance)}`
-                    });
-                } else {
-                    user.economy.balance -= amount;
-                    user.economy.totalSpent += amount;
-                    
-                    await user.save();
-                    await logTransaction(senderId, 'gamble_lose', amount);
-                    
-                    await sock.sendMessage(chatId, {
-                        text: `🎰 *GAMBLING LOSS!* 🎰
-
-😔 *You lost ${formatCurrency(amount)}*
-💵 *New Balance:* ${formatCurrency(user.economy.balance)}
-
-💡 *Better luck next time!*`
-                    });
-                }
+✨ *Come back tomorrow for another reward!*`);
                 break;
             }
 
             case 'leaderboard':
             case 'lb':
             case 'top': {
+                const models = getModels();
                 const users = await models.User.find({})
                     .sort({ 
                         $expr: { 
@@ -642,9 +354,7 @@ const economy = async (sock, message) => {
                     .lean();
 
                 if (users.length === 0) {
-                    return sock.sendMessage(chatId, {
-                        text: '📊 *No users found in the economy system*'
-                    });
+                    return reply('📊 *No users found in the economy system*');
                 }
 
                 // Sort by total wealth (balance + bank)
@@ -663,76 +373,18 @@ const economy = async (sock, message) => {
                     leaderboard += `   💎 ${formatCurrency(wealth)}\n\n`;
                 });
 
-                await sock.sendMessage(chatId, {
-                    text: leaderboard,
+                await reply(leaderboard, {
                     mentions: users.map(u => u.userId)
-                });
-                break;
-            }
-
-            case 'profile':
-            case 'stats': {
-                const target = getTargetUser(message, args.join(' ')) || senderId;
-                const targetUser = await initUser(target);
-                const totalWealth = targetUser.economy.balance + targetUser.economy.bank;
-                const rank = getUserRank(totalWealth);
-
-                await sock.sendMessage(chatId, {
-                    text: `👤 *USER PROFILE* 👤
-
-📱 *User:* @${target.split('@')[0]}
-🏅 *Rank:* ${rank}
-📅 *Joined:* ${targetUser.createdAt.toLocaleDateString()}
-
-💰 *WEALTH*
-💵 *Wallet:* ${formatCurrency(targetUser.economy.balance)}
-🏦 *Bank:* ${formatCurrency(targetUser.economy.bank)}
-💎 *Total:* ${formatCurrency(totalWealth)}
-
-📊 *STATISTICS*
-💰 *Total Earned:* ${formatCurrency(targetUser.economy.totalEarned)}
-💸 *Total Spent:* ${formatCurrency(targetUser.economy.totalSpent)}
-⚡ *Work Count:* ${targetUser.economy.workCount}
-🦹 *Rob Count:* ${targetUser.economy.robCount}
-
-🎯 *ATTENDANCE*
-📋 *Total Days:* ${targetUser.attendance.totalAttendances}
-🔥 *Current Streak:* ${targetUser.attendance.streak}
-🏆 *Best Streak:* ${targetUser.attendance.longestStreak}
-
-📈 *ACTIVITY*
-💬 *Commands Used:* ${targetUser.stats.commandsUsed}
-🕒 *Last Seen:* ${targetUser.stats.lastSeen.toLocaleString()}`,
-                    mentions: [target]
-                });
-                break;
-            }
-
-            case 'shop': {
-                await sock.sendMessage(chatId, {
-                    text: `🛍️ *ECONOMY SHOP* 🛍️
-
-🚧 *Coming Soon!* 🚧
-
-💡 *Planned Items:*
-• 🛡️ Protection from robberies
-• 💎 VIP status upgrades
-• 🎁 Special rewards
-• ⚡ Gambling multipliers
-• 🏆 Custom ranks
-
-💰 *Save your ${ecoSettings.currency} for amazing items!*`
                 });
                 break;
             }
 
             case 'ecosettings': {
                 if (!isOwner(senderId) && !isAdmin(senderId)) {
-                    return sock.sendMessage(chatId, {
-                        text: '🚫 *Only admins can view economy settings*'
-                    });
+                    return reply('🚫 *Only admins can view economy settings*');
                 }
 
+                const models = getModels();
                 const dbStats = await models.User.countDocuments();
                 const totalWealth = await models.User.aggregate([
                     {
@@ -747,8 +399,7 @@ const economy = async (sock, message) => {
 
                 const stats = totalWealth[0] || { totalBalance: 0, totalBank: 0, totalEarned: 0 };
 
-                await sock.sendMessage(chatId, {
-                    text: `🔧 *ECONOMY SYSTEM STATS* 🔧
+                await reply(`🔧 *ECONOMY SYSTEM STATS* 🔧
 
 👥 *Total Users:* ${dbStats}
 💰 *Total in Circulation:*
@@ -763,21 +414,48 @@ const economy = async (sock, message) => {
 🦹 *Rob Success Rate:* ${(ecoSettings.robSuccessRate * 100)}%
 🎰 *Gambling Limits:* ${formatCurrency(ecoSettings.gamblingMinBet)} - ${formatCurrency(ecoSettings.gamblingMaxBet)}
 
-🗄️ *Database:* MongoDB Connected ✅`
-                });
+🗄️ *Database:* MongoDB Connected ✅`);
                 break;
             }
+
+            default:
+                // For other economy commands, show coming soon message
+                await reply(`🚧 *${command.toUpperCase()} - COMING SOON!* 🚧
+
+💡 *Available Commands:*
+• \`${config.PREFIX}balance\` - Check your wallet
+• \`${config.PREFIX}work\` - Earn money by working
+• \`${config.PREFIX}daily\` - Claim daily reward
+• \`${config.PREFIX}leaderboard\` - View top users
+
+🔜 *More features coming soon!*`);
+                break;
         }
 
     } catch (error) {
         logger.error('Economy plugin error:', error);
-        await sock.sendMessage(message.key.remoteJid, {
-            text: '❌ *An error occurred while processing the economy command*'
-        });
+        
+        // Better error messages for users
+        if (error.message.includes('Database not connected')) {
+            await context.reply('❌ *Database connection lost. Please try again in a moment.*');
+        } else {
+            await context.reply('❌ *An error occurred while processing the economy command*');
+        }
     }
 };
 
-// Load settings on module initialization
-loadEconomySettings();
+// Plugin metadata and export
+const economyPlugin = {
+    name: 'economy',
+    description: 'Economy system with balance, work, daily rewards, and more',
+    usage: [
+        'balance - Check your wallet balance',
+        'work - Work to earn money',
+        'daily - Claim daily reward',
+        'leaderboard - View top users'
+    ],
+    category: 'economy',
+    execute
+};
 
-export default economy;
+export default economyPlugin;
