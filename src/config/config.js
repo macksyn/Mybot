@@ -99,4 +99,35 @@ export const config = {
                 warnings.push('OWNER_NUMBER not set - admin features will be limited');
             }
             if (!this.USE_PAIRING_CODE) {
-                warnings.push('USE
+                warnings.push('USE_PAIRING_CODE=false - QR code scanning required (not ideal for cloud deployment)');
+            }
+            if (this.DATABASE_URL && this.DATABASE_URL.includes('localhost')) {
+                warnings.push('Using localhost database in production - consider using cloud PostgreSQL');
+            }
+            if (!this.PG_PASSWORD && this.DATABASE_URL && !this.DATABASE_URL.includes('password')) {
+                warnings.push('No database password detected - ensure your database is properly secured');
+            }
+        }
+        
+        if (required.length > 0) {
+            throw new Error(`Missing required configuration: ${required.join(', ')}`);
+        }
+        
+        if (warnings.length > 0) {
+            console.warn('⚠️  Configuration warnings:');
+            warnings.forEach(warning => console.warn(`   - ${warning}`));
+        }
+        
+        // Validate and clean admin numbers
+        if (this.ADMIN_NUMBERS.length > 0) {
+            this.ADMIN_NUMBERS = this.ADMIN_NUMBERS
+                .map(num => num.trim().replace(/\D/g, ''))
+                .filter(num => num && num.length >= 10);
+        }
+        
+        return true;
+    }
+};
+
+// Validate configuration on load
+config.validate();
