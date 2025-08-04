@@ -4,7 +4,7 @@ import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
 import { MessageHandler } from './handlers/messageHandler.js';
 import { EventHandler } from './handlers/eventHandler.js';
-import connectToMongoDB, { db } from './database/mongodb.js';
+import connectToPostgreSQL, { db } from './database/postgresql.js';
 
 let isConnecting = false;
 let reconnectAttempts = 0;
@@ -19,28 +19,30 @@ export async function createBot() {
     isConnecting = true;
     
     try {
-        // 🗄️ CONNECT TO MONGODB FIRST
+        // 🗄️ CONNECT TO POSTGRESQL FIRST
         logger.info('🚀 Initializing bot systems...');
         
-        const mongoConnected = await connectToMongoDB();
-        if (!mongoConnected) {
-            logger.error('❌ Failed to connect to MongoDB. Cannot start bot.');
+        const dbConnected = await connectToPostgreSQL();
+        if (!dbConnected) {
+            logger.error('❌ Failed to connect to PostgreSQL. Cannot start bot.');
             process.exit(1);
         }
         
         // Display database connection info
         const dbInfo = db.getConnectionInfo();
         logger.info(`✅ Database connection established`);
-        logger.info(`📊 Database Name: ${dbInfo.databaseName}`);
+        logger.info(`📊 Database: ${dbInfo.database}`);
+        logger.info(`🏠 Host: ${dbInfo.host}:${dbInfo.port}`);
+        logger.info(`👤 User: ${dbInfo.user}`);
         logger.info(`🔗 Connection Status: ${dbInfo.connected ? 'Connected' : 'Disconnected'}`);
-        logger.info(`📡 Ready State: ${dbInfo.readyState === 1 ? 'Ready' : 'Not Ready'}`);
         
         // Get database stats
         const stats = await db.getStats();
         if (stats) {
-            logger.info(`📋 Collections: ${stats.collections}`);
-            logger.info(`📦 Total Objects: ${stats.objects}`);
-            logger.info(`💾 Data Size: ${(stats.dataSize / 1024 / 1024).toFixed(2)} MB`);
+            logger.info(`👥 Users: ${stats.users}`);
+            logger.info(`📋 Groups: ${stats.groups}`);
+            logger.info(`⚙️  Settings: ${stats.settings}`);
+            logger.info(`💰 Total Wealth: ₦${stats.totalWealth.toLocaleString()}`);
         }
         
         const { state, saveCreds } = await useMultiFileAuthState('./sessions');
@@ -48,7 +50,7 @@ export async function createBot() {
         
         logger.info(`Using Baileys v${version.join('.')}, isLatest: ${isLatest}`);
         
-        // Browser selection similar to the working implementation
+        // Browser selection
         const browsers = ["Chrome", "Firefox", "Safari", "Edge"];
         const randomBrowser = browsers[Math.floor(Math.random() * browsers.length)];
         
@@ -82,11 +84,10 @@ export async function createBot() {
         logger.info('📊 Loading economy plugin...');
         await messageHandler.loadEconomyPlugin();
         
-        // Handle pairing code generation - similar to working implementation
+        // Handle pairing code generation
         if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
             logger.info('🔗 Bot not registered, preparing pairing code...');
             
-            // Add delay before requesting pairing code (like the working implementation)
             await delay(1500);
             
             try {
@@ -135,7 +136,7 @@ export async function createBot() {
                 
                 if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
                     reconnectAttempts++;
-                    const delay = Math.min(reconnectAttempts * 2000, 10000); // Exponential backoff, max 10s
+                    const delay = Math.min(reconnectAttempts * 2000, 10000);
                     
                     logger.info(`🔄 Reconnecting in ${delay/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
                     setTimeout(() => createBot(), delay);
@@ -147,7 +148,7 @@ export async function createBot() {
                     if (config.AUTO_RESTART_ON_LOGOUT) {
                         logger.info('🔄 Auto-restart enabled, restarting in 10 seconds...');
                         setTimeout(() => {
-                            process.exit(0); // Let the process manager restart
+                            process.exit(0);
                         }, 10000);
                     } else {
                         process.exit(0);
@@ -155,17 +156,16 @@ export async function createBot() {
                 }
             } else if (connection === 'open') {
                 isConnecting = false;
-                reconnectAttempts = 0; // Reset on successful connection
+                reconnectAttempts = 0;
                 
                 logger.info('✅ Connected to WhatsApp successfully!');
                 logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
                 logger.info(`👤 Connected as: ${sock.user?.name || 'Unknown'} (${sock.user?.id || 'Unknown'})`);
-                logger.info(`🗄️  Database: ${db.isConnected() ? 'MongoDB Connected ✅' : 'Database Disconnected ❌'}`);
+                logger.info(`🗄️  Database: ${db.getConnectionInfo().connected ? 'PostgreSQL Connected ✅' : 'Database Disconnected ❌'}`);
                 
                 // Send startup message to owner
                 if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
                     try {
-                        // Add delay before sending startup message
                         await delay(2000);
                         
                         const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
@@ -179,10 +179,11 @@ export async function createBot() {
                                   `⚡ Node.js: ${process.version}\n` +
                                   `👤 Connected as: ${sock.user?.name || 'Bot'}\n\n` +
                                   `🗄️  *DATABASE STATUS*\n` +
-                                  `📊 MongoDB: ${db.isConnected() ? '✅ Connected' : '❌ Disconnected'}\n` +
+                                  `📊 PostgreSQL: ${dbStats.connected ? '✅ Connected' : '❌ Disconnected'}\n` +
                                   `🏷️  Database: ${config.DATABASE_NAME}\n` +
-                                  `📋 Collections: ${dbStats?.collections || 'N/A'}\n` +
-                                  `📦 Objects: ${dbStats?.objects || 'N/A'}\n\n` +
+                                  `👥 Users: ${dbStats.users}\n` +
+                                  `📋 Groups: ${dbStats.groups}\n` +
+                                  `💰 Total Wealth: ₦${dbStats.totalWealth.toLocaleString()}\n\n` +
                                   `✅ All systems operational!\n` +
                                   `Type ${config.PREFIX}help to see available commands.`
                         });
@@ -228,9 +229,10 @@ export async function createBot() {
         // Database health check interval
         setInterval(async () => {
             try {
-                if (!db.isConnected()) {
+                const isHealthy = await db.healthCheck();
+                if (!isHealthy) {
                     logger.warn('⚠️  Database connection lost, attempting to reconnect...');
-                    await connectToMongoDB();
+                    await connectToPostgreSQL();
                 }
             } catch (error) {
                 logger.error('Database health check failed:', error);
