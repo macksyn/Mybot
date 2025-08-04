@@ -1,147 +1,48 @@
+// 🔧 MONGODB CONNECTION DIAGNOSTIC & FIXES
+
+// 1. COMMON ISSUES AND SOLUTIONS:
+
+/*
+❌ ISSUE 1: Environment Variables Not Loaded
+- Check if MONGODB_URI is properly set in your .env file
+- Verify DATABASE_NAME is set
+*/
+
+// 🔍 Quick diagnostic - Add this to your index.js before starting the bot:
+console.log('🔍 MONGODB DIAGNOSTIC:');
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+console.log('DATABASE_NAME exists:', !!process.env.DATABASE_NAME);
+console.log('MONGODB_URI preview:', process.env.MONGODB_URI ? process.env.MONGODB_URI.substring(0, 20) + '...' : 'NOT SET');
+
+/*
+❌ ISSUE 2: Incorrect MongoDB URI Format
+Examples of correct formats:
+- MongoDB Atlas: mongodb+srv://username:password@cluster.mongodb.net/database
+- Local MongoDB: mongodb://localhost:27017/database
+- MongoDB with auth: mongodb://username:password@host:port/database
+*/
+
+/*
+❌ ISSUE 3: Network/Firewall Issues
+- MongoDB Atlas: Check IP whitelist (0.0.0.0/0 for development)
+- Local MongoDB: Ensure MongoDB service is running
+- Cloud deployment: Check network policies
+*/
+
+// 2. IMPROVED mongodb.js with better error handling:
+
 import mongoose from 'mongoose';
 import { config } from '../config/config.js';
 import { logger } from '../utils/logger.js';
 
-// MongoDB connection state
+// Connection state tracking
 let isConnected = false;
 let connectionAttempts = 0;
 const MAX_CONNECTION_ATTEMPTS = 5;
 
-// Database models will be stored here
-export const models = {};
-
-// User Schema for Economy and General Data
-const userSchema = new mongoose.Schema({
-    userId: { type: String, required: true, unique: true, index: true },
-    username: { type: String, default: null },
-    phoneNumber: { type: String, default: null },
-    
-    // Economy fields
-    economy: {
-        balance: { type: Number, default: 1000 },
-        bank: { type: Number, default: 0 },
-        totalEarned: { type: Number, default: 0 },
-        totalSpent: { type: Number, default: 0 },
-        workCount: { type: Number, default: 0 },
-        robCount: { type: Number, default: 0 },
-        lastDaily: { type: String, default: null },
-        rank: { type: String, default: 'Newbie' },
-        inventory: [{ 
-            itemId: String, 
-            name: String, 
-            quantity: Number, 
-            purchaseDate: Date 
-        }],
-        clan: { type: String, default: null },
-        bounty: { type: Number, default: 0 }
-    },
-    
-    // Attendance and activity
-    attendance: {
-        lastAttendance: { type: String, default: null },
-        totalAttendances: { type: Number, default: 0 },
-        streak: { type: Number, default: 0 },
-        longestStreak: { type: Number, default: 0 },
-        birthdayData: { type: Object, default: null }
-    },
-    
-    // Bot usage stats
-    stats: {
-        commandsUsed: { type: Number, default: 0 },
-        messagesReceived: { type: Number, default: 0 },
-        firstSeen: { type: Date, default: Date.now },
-        lastSeen: { type: Date, default: Date.now },
-        isBlocked: { type: Boolean, default: false },
-        warningCount: { type: Number, default: 0 }
-    },
-    
-    // Preferences
-    preferences: {
-        language: { type: String, default: 'en' },
-        timezone: { type: String, default: config.TIMEZONE },
-        notifications: { type: Boolean, default: true }
-    }
-}, {
-    timestamps: true,
-    collection: 'users'
-});
-
-// Settings Schema for Bot Configuration
-const settingsSchema = new mongoose.Schema({
-    key: { type: String, required: true, unique: true, index: true },
-    value: { type: mongoose.Schema.Types.Mixed, required: true },
-    description: { type: String, default: '' },
-    category: { type: String, default: 'general' },
-    updatedBy: { type: String, default: null }
-}, {
-    timestamps: true,
-    collection: 'settings'
-});
-
-// Sessions Schema for WhatsApp Authentication (optional)
-const sessionSchema = new mongoose.Schema({
-    sessionId: { type: String, required: true, unique: true, index: true },
-    creds: { type: Object, required: true },
-    keys: { type: Object, required: true },
-    lastUpdated: { type: Date, default: Date.now }
-}, {
-    timestamps: true,
-    collection: 'sessions'
-});
-
-// Clans Schema for Clan System
-const clanSchema = new mongoose.Schema({
-    name: { type: String, required: true, unique: true, index: true },
-    leader: { type: String, required: true },
-    members: [{ type: String }],
-    level: { type: Number, default: 1 },
-    bank: { type: Number, default: 0 },
-    description: { type: String, default: '' },
-    settings: {
-        isPrivate: { type: Boolean, default: false },
-        maxMembers: { type: Number, default: 50 },
-        requireApproval: { type: Boolean, default: true }
-    }
-}, {
-    timestamps: true,
-    collection: 'clans'
-});
-
-// Logs Schema for Bot Activity Logging
-const logSchema = new mongoose.Schema({
-    level: { type: String, required: true, index: true },
-    message: { type: String, required: true },
-    meta: { type: Object, default: {} },
-    userId: { type: String, default: null, index: true },
-    command: { type: String, default: null, index: true },
-    error: { type: Object, default: null }
-}, {
-    timestamps: true,
-    collection: 'logs',
-    // Auto-delete logs older than 30 days
-    expires: '30d'
-});
-
-// Initialize models
-function initializeModels() {
-    try {
-        models.User = mongoose.model('User', userSchema);
-        models.Settings = mongoose.model('Settings', settingsSchema);
-        models.Session = mongoose.model('Session', sessionSchema);
-        models.Clan = mongoose.model('Clan', clanSchema);
-        models.Log = mongoose.model('Log', logSchema);
-        
-        logger.info('📋 Database models initialized successfully');
-        return true;
-    } catch (error) {
-        logger.error('❌ Failed to initialize database models:', error);
-        return false;
-    }
-}
-
-// Connect to MongoDB with retry logic
+// 🔧 ENHANCED CONNECTION FUNCTION
 export async function connectToMongoDB() {
-    if (isConnected) {
+    if (isConnected && mongoose.connection.readyState === 1) {
         logger.info('📦 Already connected to MongoDB');
         return true;
     }
@@ -149,207 +50,283 @@ export async function connectToMongoDB() {
     connectionAttempts++;
     
     try {
-        logger.info('🔄 Connecting to MongoDB...');
-        logger.info(`📍 Database: ${config.DATABASE_NAME}`);
-        logger.info(`🔗 Connection attempt: ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}`);
+        logger.info('🔄 Attempting MongoDB connection...');
+        logger.info(`📍 URI: ${config.MONGODB_URI.substring(0, 30)}...`);
+        logger.info(`🗄️  Database: ${config.DATABASE_NAME}`);
+        logger.info(`🔄 Attempt: ${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS}`);
         
-        // Set mongoose options
-        mongoose.set('strictQuery', false);
-        
-        const connectionOptions = {
-            dbName: config.DATABASE_NAME,
-            maxPoolSize: 10,
-            serverSelectionTimeoutMS: 10000,
-            socketTimeoutMS: 45000,
-            bufferCommands: false,
-            bufferMaxEntries: 0,
-            // For MongoDB Atlas or cloud databases
-            retryWrites: true,
-            retryReads: true
-        };
-        
-        // Connect to MongoDB
-        await mongoose.connect(config.MONGODB_URI, connectionOptions);
-        
-        isConnected = true;
-        connectionAttempts = 0; // Reset on successful connection
-        
-        logger.info('✅ Connected to MongoDB successfully!');
-        logger.info(`🗄️  Database Name: ${config.DATABASE_NAME}`);
-        logger.info(`📊 Connection State: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Connecting'}`);
-        
-        // Initialize models
-        const modelsInitialized = initializeModels();
-        if (!modelsInitialized) {
-            throw new Error('Failed to initialize database models');
+        // Close existing connection if any
+        if (mongoose.connection.readyState !== 0) {
+            await mongoose.connection.close();
+            logger.info('🔌 Closed existing connection');
         }
         
-        // Initialize default settings if needed
-        await initializeDefaultSettings();
+        // Set strict query mode
+        mongoose.set('strictQuery', false);
         
-        // Set up connection event listeners
-        setupConnectionEventListeners();
+        // 🚀 OPTIMIZED CONNECTION OPTIONS
+        const connectionOptions = {
+            dbName: config.DATABASE_NAME,
+            
+            // Connection pool settings
+            maxPoolSize: 10,
+            minPoolSize: 1,
+            maxIdleTimeMS: 30000,
+            
+            // Timeout settings
+            serverSelectionTimeoutMS: 15000,
+            socketTimeoutMS: 45000,
+            connectTimeoutMS: 15000,
+            
+            // Buffering settings
+            bufferCommands: false,
+            bufferMaxEntries: 0,
+            
+            // Reliability settings
+            retryWrites: true,
+            retryReads: true,
+            
+            // Additional options for stability
+            heartbeatFrequencyMS: 10000,
+            family: 4, // Use IPv4, skip trying IPv6
+        };
         
-        return true;
+        // Add authentication options if URI contains credentials
+        if (config.MONGODB_URI.includes('@')) {
+            connectionOptions.authSource = 'admin';
+        }
+        
+        logger.info('⚙️  Connection options configured');
+        
+        // 🔗 CONNECT TO MONGODB
+        await mongoose.connect(config.MONGODB_URI, connectionOptions);
+        
+        // Verify connection
+        if (mongoose.connection.readyState === 1) {
+            isConnected = true;
+            connectionAttempts = 0;
+            
+            logger.info('✅ MongoDB connected successfully!');
+            logger.info(`🗄️  Database: ${mongoose.connection.db.databaseName}`);
+            logger.info(`🖥️  Host: ${mongoose.connection.host}:${mongoose.connection.port}`);
+            logger.info(`📊 Ready State: ${mongoose.connection.readyState}`);
+            
+            // Test database with a simple operation
+            await testDatabaseConnection();
+            
+            // Initialize models and default data
+            const modelsInitialized = initializeModels();
+            if (modelsInitialized) {
+                await initializeDefaultSettings();
+                logger.info('🎯 Database setup completed');
+            }
+            
+            // Set up connection monitoring
+            setupConnectionEventListeners();
+            
+            return true;
+        } else {
+            throw new Error(`Connection state: ${mongoose.connection.readyState}`);
+        }
         
     } catch (error) {
         isConnected = false;
-        logger.error('❌ MongoDB connection failed:', error.message);
         
+        // 🚨 DETAILED ERROR LOGGING
+        logger.error('❌ MongoDB connection failed:');
+        logger.error(`   Error: ${error.message}`);
+        logger.error(`   Code: ${error.code || 'N/A'}`);
+        logger.error(`   Name: ${error.name || 'N/A'}`);
+        
+        // Specific error handling
+        if (error.message.includes('ENOTFOUND')) {
+            logger.error('🌐 DNS Resolution failed - Check your MongoDB URI hostname');
+        } else if (error.message.includes('ECONNREFUSED')) {
+            logger.error('🚫 Connection refused - MongoDB server may be down');
+        } else if (error.message.includes('authentication failed')) {
+            logger.error('🔐 Authentication failed - Check username/password');
+        } else if (error.message.includes('network')) {
+            logger.error('🌍 Network error - Check internet connection/firewall');
+        } else if (error.message.includes('timeout')) {
+            logger.error('⏰ Connection timeout - Server may be slow or unreachable');
+        }
+        
+        // Retry logic with exponential backoff
         if (connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-            const delay = Math.min(connectionAttempts * 2000, 10000); // Exponential backoff, max 10s
-            logger.info(`🔄 Retrying MongoDB connection in ${delay/1000} seconds...`);
+            const delay = Math.min(connectionAttempts * 3000, 15000);
+            logger.warn(`🔄 Retrying in ${delay/1000}s... (${connectionAttempts}/${MAX_CONNECTION_ATTEMPTS})`);
             
             setTimeout(() => {
                 connectToMongoDB();
             }, delay);
         } else {
-            logger.error(`❌ Max MongoDB connection attempts (${MAX_CONNECTION_ATTEMPTS}) reached. Exiting...`);
-            process.exit(1);
+            logger.error('💀 Max connection attempts reached');
+            logger.error('🔧 TROUBLESHOOTING STEPS:');
+            logger.error('   1. Check MONGODB_URI in .env file');
+            logger.error('   2. Verify MongoDB server is running');
+            logger.error('   3. Check network connectivity');
+            logger.error('   4. Verify database credentials');
+            logger.error('   5. Check firewall/security groups');
+            
+            // Don't exit in production, just log the error
+            if (config.NODE_ENV !== 'production') {
+                process.exit(1);
+            }
         }
         
         return false;
     }
 }
 
-// Set up MongoDB connection event listeners
-function setupConnectionEventListeners() {
-    // Connection successful
-    mongoose.connection.on('connected', () => {
-        logger.info('🔗 Mongoose connected to MongoDB');
-        isConnected = true;
-    });
-    
-    // Connection error
-    mongoose.connection.on('error', (error) => {
-        logger.error('❌ MongoDB connection error:', error);
-        isConnected = false;
-    });
-    
-    // Connection disconnected
-    mongoose.connection.on('disconnected', () => {
-        logger.warn('⚠️  MongoDB disconnected');
-        isConnected = false;
-        
-        // Attempt to reconnect
-        if (connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-            logger.info('🔄 Attempting to reconnect to MongoDB...');
-            setTimeout(() => {
-                connectToMongoDB();
-            }, 5000);
-        }
-    });
-    
-    // Application termination
-    process.on('SIGINT', async () => {
-        logger.info('🔄 Closing MongoDB connection...');
-        await mongoose.connection.close();
-        logger.info('✅ MongoDB connection closed');
-    });
-}
-
-// Initialize default settings
-async function initializeDefaultSettings() {
+// 🧪 TEST DATABASE CONNECTION
+async function testDatabaseConnection() {
     try {
-        const defaultSettings = [
-            {
-                key: 'economy.currency',
-                value: '₦',
-                description: 'Currency symbol for economy system',
-                category: 'economy'
-            },
-            {
-                key: 'economy.startingBalance',
-                value: 1000,
-                description: 'Starting balance for new users',
-                category: 'economy'
-            },
-            {
-                key: 'economy.dailyMinAmount',
-                value: 500,
-                description: 'Minimum daily reward amount',
-                category: 'economy'
-            },
-            {
-                key: 'economy.dailyMaxAmount',
-                value: 1500,
-                description: 'Maximum daily reward amount',
-                category: 'economy'
-            },
-            {
-                key: 'bot.maintenance',
-                value: false,
-                description: 'Bot maintenance mode',
-                category: 'system'
-            },
-            {
-                key: 'bot.version',
-                value: '1.0.0',
-                description: 'Bot version',
-                category: 'system'
-            }
-        ];
+        // Simple ping test
+        await mongoose.connection.db.admin().ping();
+        logger.info('🏓 Database ping successful');
         
-        for (const setting of defaultSettings) {
-            await models.Settings.updateOne(
-                { key: setting.key },
-                { $setOnInsert: setting },
-                { upsert: true }
-            );
-        }
+        // List collections test
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        logger.info(`📋 Found ${collections.length} collections`);
         
-        logger.info('⚙️  Default settings initialized');
-        
+        return true;
     } catch (error) {
-        logger.error('❌ Failed to initialize default settings:', error);
+        logger.error('❌ Database test failed:', error.message);
+        return false;
     }
 }
 
-// Helper functions for database operations
-export const db = {
-    // Check if connected
-    isConnected: () => isConnected && mongoose.connection.readyState === 1,
-    
-    // Get connection info
-    getConnectionInfo: () => ({
-        connected: isConnected,
-        readyState: mongoose.connection.readyState,
-        databaseName: config.DATABASE_NAME,
-        host: mongoose.connection.host,
-        port: mongoose.connection.port
-    }),
-    
-    // Close connection
-    disconnect: async () => {
-        if (isConnected) {
-            await mongoose.connection.close();
-            isConnected = false;
-            logger.info('🔌 MongoDB connection closed');
-        }
-    },
-    
-    // Get database stats
-    getStats: async () => {
-        if (!isConnected) return null;
-        
-        try {
-            const stats = await mongoose.connection.db.stats();
-            const collections = await mongoose.connection.db.listCollections().toArray();
-            
+// Your existing models and helper functions here...
+// (Keep all your existing schemas and model initialization code)
+
+// 🎯 MONGODB HEALTH CHECK FUNCTION
+export const mongoHealthCheck = async () => {
+    try {
+        if (!isConnected || mongoose.connection.readyState !== 1) {
             return {
-                database: stats.db,
-                collections: collections.length,
-                dataSize: stats.dataSize,
-                indexSize: stats.indexSize,
-                storageSize: stats.storageSize,
-                objects: stats.objects
+                status: 'disconnected',
+                readyState: mongoose.connection.readyState,
+                error: 'Not connected to MongoDB'
             };
-        } catch (error) {
-            logger.error('Failed to get database stats:', error);
-            return null;
         }
+        
+        // Test with ping
+        await mongoose.connection.db.admin().ping();
+        
+        const stats = await mongoose.connection.db.stats();
+        
+        return {
+            status: 'connected',
+            readyState: mongoose.connection.readyState,
+            database: stats.db,
+            collections: stats.collections,
+            dataSize: `${(stats.dataSize / 1024 / 1024).toFixed(2)} MB`,
+            host: mongoose.connection.host,
+            port: mongoose.connection.port
+        };
+        
+    } catch (error) {
+        return {
+            status: 'error',
+            readyState: mongoose.connection.readyState,
+            error: error.message
+        };
     }
 };
 
-// Export connection function
-export default connectToMongoDB;
+// 3. CREATE A .env TEMPLATE FILE:
+
+/*
+Create a file named ".env" in your project root with this content:
+
+# Bot Configuration
+BOT_NAME=Groq 🤖
+PREFIX=!
+OWNER_NUMBER=2348166353338
+TIMEZONE=Africa/Lagos
+
+# Authentication
+USE_PAIRING_CODE=true
+SEND_STARTUP_MESSAGE=true
+
+# MongoDB Configuration (CHOOSE ONE):
+
+# Option 1: MongoDB Atlas (Cloud - Recommended)
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/whatsapp-bot?retryWrites=true&w=majority
+DATABASE_NAME=whatsapp-bot
+
+# Option 2: Local MongoDB
+# MONGODB_URI=mongodb://localhost:27017/whatsapp-bot
+# DATABASE_NAME=whatsapp-bot
+
+# Option 3: MongoDB with authentication
+# MONGODB_URI=mongodb://username:password@host:port/whatsapp-bot
+# DATABASE_NAME=whatsapp-bot
+
+# Environment
+NODE_ENV=development
+PORT=8000
+
+# Features (optional)
+ENABLE_WEATHER=true
+ENABLE_JOKES=true
+ENABLE_QUOTES=true
+ENABLE_CALCULATOR=true
+ENABLE_ADMIN_COMMANDS=true
+
+# Logging
+LOG_LEVEL=info
+LOG_TO_FILE=false
+*/
+
+// 4. QUICK MONGODB TEST SCRIPT
+// Create a file named "test-mongodb.js" and run with: node test-mongodb.js
+
+/*
+import 'dotenv/config';
+import mongoose from 'mongoose';
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/whatsapp-bot';
+const DATABASE_NAME = process.env.DATABASE_NAME || 'whatsapp-bot';
+
+console.log('🧪 Testing MongoDB Connection...');
+console.log('URI:', MONGODB_URI.substring(0, 30) + '...');
+console.log('Database:', DATABASE_NAME);
+
+async function testConnection() {
+    try {
+        await mongoose.connect(MONGODB_URI, {
+            dbName: DATABASE_NAME,
+            serverSelectionTimeoutMS: 10000
+        });
+        
+        console.log('✅ Connection successful!');
+        console.log('Host:', mongoose.connection.host);
+        console.log('Database:', mongoose.connection.db.databaseName);
+        
+        // Test ping
+        await mongoose.connection.db.admin().ping();
+        console.log('✅ Ping successful!');
+        
+        // Test write operation
+        const testCollection = mongoose.connection.db.collection('test');
+        await testCollection.insertOne({ test: true, timestamp: new Date() });
+        console.log('✅ Write test successful!');
+        
+        // Clean up test
+        await testCollection.deleteOne({ test: true });
+        console.log('✅ All tests passed!');
+        
+    } catch (error) {
+        console.error('❌ Connection test failed:');
+        console.error('Error:', error.message);
+        console.error('Code:', error.code);
+    } finally {
+        await mongoose.connection.close();
+        console.log('🔌 Connection closed');
+        process.exit(0);
+    }
+}
+
+testConnection();
+*/
