@@ -78,6 +78,10 @@ export async function createBot() {
         const messageHandler = new MessageHandler(sock);
         const eventHandler = new EventHandler(sock);
         
+        // 🔥 LOAD ECONOMY PLUGIN AFTER DATABASE CONNECTION
+        logger.info('📊 Loading economy plugin...');
+        await messageHandler.loadEconomyPlugin();
+        
         // Handle pairing code generation - similar to working implementation
         if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
             logger.info('🔗 Bot not registered, preparing pairing code...');
