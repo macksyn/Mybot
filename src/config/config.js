@@ -1,9 +1,9 @@
 export const config = {
     // Bot Configuration
-    BOT_NAME: process.env.BOT_NAME || 'WhatsApp Bot',
+    BOT_NAME: process.env.BOT_NAME || 'Groq 🤖',
     PREFIX: process.env.PREFIX || '!',
-    OWNER_NUMBER: process.env.OWNER_NUMBER || '',
-    TIMEZONE: process.env.TIMEZONE || 'UTC',
+    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
+    TIMEZONE: process.env.TIMEZONE || 'Africa/Lagos',
     
     // Authentication Method
     USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
