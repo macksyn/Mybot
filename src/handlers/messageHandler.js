@@ -6,12 +6,12 @@ import { config } from '../config/config.js';
 import pingPlugin from '../plugins/ping.js';
 import helpPlugin from '../plugins/help.js';
 import infoPlugin from '../plugins/info.js';
-// import weatherPlugin from '../plugins/weather.js';
-// import jokePlugin from '../plugins/joke.js';
-// import quotePlugin from '../plugins/quote.js';
-// import calculatorPlugin from '../plugins/calculator.js';
-// import adminPlugin from '../plugins/admin.js';
-// import pairPlugin from '../plugins/pair.js';
+import weatherPlugin from '../plugins/weather.js';
+import jokePlugin from '../plugins/joke.js';
+import quotePlugin from '../plugins/quote.js';
+import calculatorPlugin from '../plugins/calculator.js';
+import adminPlugin from '../plugins/admin.js';
+import pairPlugin from '../plugins/pair.js';
 // NOTE: Economy plugin will be loaded dynamically after database connection
 
 export class MessageHandler {
