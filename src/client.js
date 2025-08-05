@@ -1,5 +1,5 @@
 import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+// Import Boom is not needed for this implementation
 import qrcode from 'qrcode-terminal';
 import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
@@ -43,7 +43,7 @@ export async function createBot() {
         }
         
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             
             logger.info('Connection closed due to:', lastDisconnect?.error);
             
