@@ -4,7 +4,7 @@ import { config } from '../config/config.js';
 // Rate limiting storage
 const rateLimitMap = new Map();
 
-// Delay function (like the working implementation)
+// Delay function
 export const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -53,31 +53,116 @@ export function getMessageContent(message) {
 }
 
 /**
- * Get sender ID
+ * Get sender ID - Enhanced to handle all formats
  */
 export function getSenderId(message) {
     return message.key.fromMe ? 'me' : (message.key.participant || message.key.remoteJid);
 }
 
 /**
- * Check if user is owner
+ * Normalize phone number - removes all non-digits and handles country codes
  */
-export function isOwner(senderId) {
-    if (!config.OWNER_NUMBER) return false;
-    const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
-    return senderId === ownerJid || senderId === config.OWNER_NUMBER.replace(/\D/g, '');
+export function normalizePhoneNumber(number) {
+    if (!number) return '';
+    
+    // Remove all non-digits
+    let cleaned = number.replace(/\D/g, '');
+    
+    // Remove leading zeros
+    cleaned = cleaned.replace(/^0+/, '');
+    
+    // Handle common country code formats
+    if (cleaned.startsWith('234') && cleaned.length === 13) {
+        // Nigerian number with country code
+        return cleaned;
+    } else if (cleaned.length === 10 && !cleaned.startsWith('234')) {
+        // Nigerian number without country code
+        return '234' + cleaned;
+    }
+    
+    return cleaned;
 }
 
 /**
- * Check if user is admin
+ * Extract phone number from JID
+ */
+export function extractPhoneFromJid(jid) {
+    if (!jid) return '';
+    
+    // Handle different JID formats
+    // Examples: 2348166353338@s.whatsapp.net, 2348166353338@c.us, etc.
+    const phoneMatch = jid.match(/^(\d+)@/);
+    return phoneMatch ? phoneMatch[1] : '';
+}
+
+/**
+ * Check if user is owner - Enhanced with better matching
+ */
+export function isOwner(senderId) {
+    if (!config.OWNER_NUMBER) return false;
+    
+    // Normalize the configured owner number
+    const normalizedOwner = normalizePhoneNumber(config.OWNER_NUMBER);
+    
+    // Extract phone number from sender ID
+    const senderPhone = extractPhoneFromJid(senderId);
+    const normalizedSender = normalizePhoneNumber(senderPhone);
+    
+    // Debug logging
+    console.log('Owner Check:', {
+        configOwner: config.OWNER_NUMBER,
+        normalizedOwner,
+        senderId,
+        senderPhone,
+        normalizedSender,
+        match: normalizedOwner === normalizedSender
+    });
+    
+    // Check multiple formats
+    const checks = [
+        normalizedOwner === normalizedSender,
+        normalizedOwner === normalizePhoneNumber(senderId),
+        config.OWNER_NUMBER === senderPhone,
+        senderId === createJid(config.OWNER_NUMBER)
+    ];
+    
+    return checks.some(check => check);
+}
+
+/**
+ * Check if user is admin - Enhanced with better matching
  */
 export function isAdmin(senderId) {
+    // Owner is always admin
     if (isOwner(senderId)) return true;
     
-    const cleanSenderId = senderId.replace(/\D/g, '');
+    if (!config.ADMIN_NUMBERS || config.ADMIN_NUMBERS.length === 0) return false;
+    
+    // Extract phone number from sender ID
+    const senderPhone = extractPhoneFromJid(senderId);
+    const normalizedSender = normalizePhoneNumber(senderPhone);
+    
+    // Check against all admin numbers
     return config.ADMIN_NUMBERS.some(adminNum => {
-        const cleanAdminNum = adminNum.replace(/\D/g, '');
-        return cleanSenderId === cleanAdminNum;
+        const normalizedAdmin = normalizePhoneNumber(adminNum);
+        
+        // Debug logging for each admin check
+        console.log('Admin Check:', {
+            adminNum,
+            normalizedAdmin,
+            senderId,
+            senderPhone,
+            normalizedSender,
+            match: normalizedAdmin === normalizedSender
+        });
+        
+        // Multiple format checks
+        return [
+            normalizedAdmin === normalizedSender,
+            normalizedAdmin === normalizePhoneNumber(senderId),
+            adminNum === senderPhone,
+            senderId === createJid(adminNum)
+        ].some(check => check);
     });
 }
 
@@ -85,20 +170,14 @@ export function isAdmin(senderId) {
  * Format phone number for WhatsApp
  */
 export function formatPhoneNumber(number) {
-    // Remove all non-digits
-    const cleaned = number.replace(/\D/g, '');
-    // Add country code if missing (assuming it's a 10-digit number without country code)
-    if (cleaned.length === 10) {
-        return '1' + cleaned; // Add US country code as default
-    }
-    return cleaned;
+    return normalizePhoneNumber(number);
 }
 
 /**
  * Create WhatsApp JID from number
  */
 export function createJid(number) {
-    const cleaned = number.replace(/\D/g, '');
+    const cleaned = normalizePhoneNumber(number);
     return cleaned + '@s.whatsapp.net';
 }
 
@@ -106,7 +185,7 @@ export function createJid(number) {
  * Extract number from JID
  */
 export function extractNumber(jid) {
-    return jid.split('@')[0];
+    return extractPhoneFromJid(jid);
 }
 
 /**
@@ -129,7 +208,7 @@ export function generateId(length = 8) {
 }
 
 /**
- * Format file size (needed by admin.js)
+ * Format file size
  */
 export function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
@@ -142,7 +221,7 @@ export function formatFileSize(bytes) {
 }
 
 /**
- * Format duration in seconds to human readable (needed by info.js)
+ * Format duration in seconds to human readable
  */
 export function formatDuration(seconds) {
     const hours = Math.floor(seconds / 3600);
@@ -190,6 +269,21 @@ export function truncateText(text, maxLength = 100) {
  */
 export function isGroupMessage(messageInfo) {
     return messageInfo.key.remoteJid?.endsWith('@g.us');
+}
+
+/**
+ * Debug function to check user permissions
+ */
+export function debugUserPermissions(senderId) {
+    console.log('=== Permission Debug ===');
+    console.log('Sender ID:', senderId);
+    console.log('Owner Number Config:', config.OWNER_NUMBER);
+    console.log('Admin Numbers Config:', config.ADMIN_NUMBERS);
+    console.log('Is Owner:', isOwner(senderId));
+    console.log('Is Admin:', isAdmin(senderId));
+    console.log('Extracted Phone:', extractPhoneFromJid(senderId));
+    console.log('Normalized Phone:', normalizePhoneNumber(extractPhoneFromJid(senderId)));
+    console.log('=======================');
 }
 
 /**
