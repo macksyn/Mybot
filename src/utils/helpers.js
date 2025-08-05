@@ -1,71 +1,97 @@
-import moment from 'moment';
 import { config } from '../config/config.js';
 
-/**
- * Extract command and arguments from message text
- */
-export function parseCommand(text, prefix = config.PREFIX) {
-    if (!text.startsWith(prefix)) return null;
+// Rate limiting storage
+const rateLimitMap = new Map();
+
+// Delay function (like the working implementation)
+export const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+export function parseCommand(messageText) {
+    if (!messageText.startsWith(config.PREFIX)) return null;
     
-    const args = text.slice(prefix.length).trim().split(/\s+/);
+    const args = messageText.slice(config.PREFIX.length).trim().split(/\s+/);
     const command = args.shift()?.toLowerCase();
+    
+    if (!command) return null;
     
     return { command, args };
 }
 
-/**
- * Format phone number for WhatsApp
- */
-export function formatPhoneNumber(number) {
-    // Remove all non-digit characters
-    const cleaned = number.replace(/\D/g, '');
+export function checkRateLimit(userId) {
+    const now = Date.now();
+    const userLimits = rateLimitMap.get(userId) || [];
     
-    // Add country code if missing
-    if (!cleaned.startsWith('1') && cleaned.length === 10) {
-        return `1${cleaned}@s.whatsapp.net`;
-    }
+    // Remove old entries (older than 1 minute)
+    const recentCommands = userLimits.filter(time => now - time < 60000);
     
-    return `${cleaned}@s.whatsapp.net`;
-}
-
-/**
- * Check if user is admin
- */
-export function isAdmin(phoneNumber) {
-    const number = phoneNumber.replace('@s.whatsapp.net', '');
-    return config.ADMIN_NUMBERS.includes(number);
-}
-
-/**
- * Check if user is owner
- */
-export function isOwner(phoneNumber) {
-    const number = phoneNumber.replace('@s.whatsapp.net', '');
-    return number === config.OWNER_NUMBER;
-}
-
-/**
- * Format time with timezone
- */
-export function formatTime(date = new Date(), timezone = config.TIMEZONE) {
-    return moment(date).tz(timezone).format('YYYY-MM-DD HH:mm:ss');
-}
-
-/**
- * Validate URL
- */
-export function isValidUrl(string) {
-    try {
-        new URL(string);
-        return true;
-    } catch (_) {
+    if (recentCommands.length >= config.MAX_COMMANDS_PER_MINUTE) {
         return false;
     }
+    
+    // Add current command
+    recentCommands.push(now);
+    rateLimitMap.set(userId, recentCommands);
+    
+    return true;
 }
 
-/**
- * Generate random ID
- */
+export function getMessageContent(message) {
+    // Handle different message types
+    if (message.conversation) return message.conversation;
+    if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
+    if (message.imageMessage?.caption) return message.imageMessage.caption;
+    if (message.videoMessage?.caption) return message.videoMessage.caption;
+    if (message.documentMessage?.caption) return message.documentMessage.caption;
+    
+    return null;
+}
+
+export function getSenderId(message) {
+    return message.key.fromMe ? 'me' : (message.key.participant || message.key.remoteJid);
+}
+
+export function isOwner(senderId) {
+    if (!config.OWNER_NUMBER) return false;
+    
+    const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
+    return senderId === ownerJid || senderId === config.OWNER_NUMBER.replace(/\D/g, '');
+}
+
+export function isAdmin(senderId) {
+    if (isOwner(senderId)) return true;
+    
+    const cleanSenderId = senderId.replace(/\D/g, '');
+    return config.ADMIN_NUMBERS.some(adminNum => {
+        const cleanAdminNum = adminNum.replace(/\D/g, '');
+        return cleanSenderId === cleanAdminNum;
+    });
+}
+
+export function formatPhoneNumber(number) {
+    // Remove all non-digits
+    const cleaned = number.replace(/\D/g, '');
+    
+    // Add country code if missing (assuming it's a 10-digit number without country code)
+    if (cleaned.length === 10) {
+        return '1' + cleaned; // Add US country code as default
+    }
+    
+    return cleaned;
+}
+
+export function createJid(number) {
+    const cleaned = number.replace(/\D/g, '');
+    return cleaned + '@s.whatsapp.net';
+}
+
+export function extractNumber(jid) {
+    return jid.split('@')[0];
+}
+
+export function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export function generateId(length = 8) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
@@ -73,124 +99,4 @@ export function generateId(length = 8) {
         result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return result;
-}
-
-/**
- * Sleep function
- */
-export function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Format file size
- */
-export function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-/**
- * Truncate text to specified length
- */
-export function truncateText(text, maxLength = 100) {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + '...';
-}
-
-/**
- * Rate limiting helper
- */
-const rateLimitMap = new Map();
-
-export function checkRateLimit(userId, maxRequests = config.MAX_COMMANDS_PER_MINUTE) {
-    const now = Date.now();
-    const windowStart = now - 60000; // 1 minute window
-    
-    if (!rateLimitMap.has(userId)) {
-        rateLimitMap.set(userId, []);
-    }
-    
-    const userRequests = rateLimitMap.get(userId);
-    
-    // Remove old requests outside the window
-    const validRequests = userRequests.filter(timestamp => timestamp > windowStart);
-    
-    if (validRequests.length >= maxRequests) {
-        return false; // Rate limit exceeded
-    }
-    
-    // Add current request
-    validRequests.push(now);
-    rateLimitMap.set(userId, validRequests);
-    
-    return true; // Request allowed
-}
-
-/**
- * Clean up rate limit map periodically
- */
-setInterval(() => {
-    const now = Date.now();
-    const windowStart = now - 60000;
-    
-    for (const [userId, requests] of rateLimitMap.entries()) {
-        const validRequests = requests.filter(timestamp => timestamp > windowStart);
-        
-        if (validRequests.length === 0) {
-            rateLimitMap.delete(userId);
-        } else {
-            rateLimitMap.set(userId, validRequests);
-        }
-    }
-}, 60000); // Clean up every minute
-
-/**
- * Extract message content
- */
-export function getMessageContent(message) {
-    return (
-        message.conversation ||
-        message.extendedTextMessage?.text ||
-        message.imageMessage?.caption ||
-        message.videoMessage?.caption ||
-        message.documentMessage?.caption ||
-        ''
-    );
-}
-
-/**
- * Check if message is from group
- */
-export function isGroupMessage(messageInfo) {
-    return messageInfo.key.remoteJid?.endsWith('@g.us');
-}
-
-/**
- * Get sender ID
- */
-export function getSenderId(messageInfo) {
-    return messageInfo.key.participant || messageInfo.key.remoteJid;
-}
-
-/**
- * Format duration in seconds to human readable
- */
-export function formatDuration(seconds) {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-        return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${secs}s`;
-    } else {
-        return `${secs}s`;
-    }
 }
