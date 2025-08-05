@@ -13,6 +13,7 @@ import calculatorPlugin from '../plugins/calculator.js';
 import adminPlugin from '../plugins/admin.js';
 import pairPlugin from '../plugins/pair.js';
 import economyPlugin from '../plugins/economy.js';
+import attendancePlugin from '../plugins/attendance.js';
 
 export class MessageHandler {
     constructor(sock) {
