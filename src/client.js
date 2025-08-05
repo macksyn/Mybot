@@ -1,303 +1,104 @@
-import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, delay, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys';
+import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
 import { MessageHandler } from './handlers/messageHandler.js';
 import { EventHandler } from './handlers/eventHandler.js';
-import connectToPostgreSQL, { db } from './database/postgresql.js';
-
-let isConnecting = false;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
 
 export async function createBot() {
-    if (isConnecting) {
-        logger.info('Already connecting, skipping...');
-        return;
-    }
+    const { state, saveCreds } = await useMultiFileAuthState('./sessions');
+    const { version, isLatest } = await fetchLatestBaileysVersion();
     
-    isConnecting = true;
+    logger.info(`Using Baileys v${version.join('.')}, isLatest: ${isLatest}`);
     
-    try {
-        // 🗄️ CONNECT TO POSTGRESQL FIRST
-        logger.info('🚀 Initializing bot systems...');
+    const sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        logger: logger.child({ module: 'baileys' }),
+        browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
+        generateHighQualityLinkPreview: true,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000,
+        markOnlineOnConnect: true,
+        syncFullHistory: false,
+        emitOwnEvents: false,
+        getMessage: async (key) => {
+            return { conversation: 'Hello!' };
+        }
+    });
+    
+    // Initialize handlers
+    const messageHandler = new MessageHandler(sock);
+    const eventHandler = new EventHandler(sock);
+    
+    // Connection events
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
         
-        const dbConnected = await connectToPostgreSQL();
-        if (!dbConnected) {
-            logger.error('❌ Failed to connect to PostgreSQL. Cannot start bot.');
-            process.exit(1);
+        if (qr) {
+            logger.info('QR Code received, scan with WhatsApp:');
+            qrcode.generate(qr, { small: true });
         }
         
-        // Display database connection info
-        const dbInfo = db.getConnectionInfo();
-        logger.info(`✅ Database connection established`);
-        logger.info(`📊 Database: ${dbInfo.database}`);
-        logger.info(`🏠 Host: ${dbInfo.host}:${dbInfo.port}`);
-        logger.info(`👤 User: ${dbInfo.user}`);
-        logger.info(`🔗 Connection Status: ${dbInfo.connected ? 'Connected' : 'Disconnected'}`);
-        
-        // Get database stats
-        const stats = await db.getStats();
-        if (stats) {
-            logger.info(`👥 Users: ${stats.users}`);
-            logger.info(`📋 Groups: ${stats.groups}`);
-            logger.info(`⚙️  Settings: ${stats.settings}`);
-            logger.info(`💰 Total Wealth: ₦${stats.totalWealth.toLocaleString()}`);
-        }
-        
-        const { state, saveCreds } = await useMultiFileAuthState('./sessions');
-        const { version, isLatest } = await fetchLatestBaileysVersion();
-        
-        logger.info(`Using Baileys v${version.join('.')}, isLatest: ${isLatest}`);
-        
-        // Browser selection
-        const browsers = ["Chrome", "Firefox", "Safari", "Edge"];
-        const randomBrowser = browsers[Math.floor(Math.random() * browsers.length)];
-        
-        const sock = makeWASocket({
-            version,
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, logger.child({ module: 'keys' }))
-            },
-            printQRInTerminal: false,
-            logger: logger.child({ module: 'baileys' }),
-            browser: Browsers.macOS(randomBrowser),
-            generateHighQualityLinkPreview: true,
-            defaultQueryTimeoutMs: 60000,
-            keepAliveIntervalMs: 30000,
-            markOnlineOnConnect: true,
-            syncFullHistory: false,
-            emitOwnEvents: false,
-            retryRequestDelayMs: 250,
-            maxMsgRetryCount: 5,
-            getMessage: async (key) => {
-                return { conversation: 'Hello!' };
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            
+            logger.info('Connection closed due to:', lastDisconnect?.error);
+            
+            if (shouldReconnect) {
+                logger.info('Reconnecting...');
+                setTimeout(() => createBot(), 3000);
+            } else {
+                logger.info('Logged out, please restart and scan QR code again');
+                process.exit(0);
             }
-        });
-        
-        // Initialize handlers
-        const messageHandler = new MessageHandler(sock);
-        const eventHandler = new EventHandler(sock);
-        
-        // 🔥 LOAD ECONOMY PLUGIN AFTER DATABASE CONNECTION
-        logger.info('📊 Loading economy plugin...');
-        await messageHandler.loadEconomyPlugin();
-        
-        // Handle pairing code generation
-        if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
-            logger.info('🔗 Bot not registered, preparing pairing code...');
+        } else if (connection === 'open') {
+            logger.info('✅ Connected to WhatsApp!');
             
-            await delay(1500);
-            
-            try {
-                const phoneNumber = config.OWNER_NUMBER.replace(/\D/g, '');
-                logger.info(`📱 Requesting pairing code for: ${phoneNumber}`);
-                
-                const code = await sock.requestPairingCode(phoneNumber);
-                logger.info(`📱 Your pairing code: ${code}`);
-                logger.info(`📞 Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number instead`);
-                logger.info(`⏰ This code will expire in about 20 seconds. Enter it quickly!`);
-                
-                // Send notification if webhook is configured
-                if (config.WEBHOOK_URL) {
-                    await sendPairingCodeNotification(code, phoneNumber);
+            // Send startup message to owner
+            if (config.OWNER_NUMBER) {
+                try {
+                    await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, {
+                        text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
+                              `📅 Started: ${new Date().toLocaleString()}\n` +
+                              `🔧 Prefix: ${config.PREFIX}\n` +
+                              `🌐 Environment: ${config.NODE_ENV}\n\n` +
+                              `Type ${config.PREFIX}help to see available commands.`
+                    });
+                } catch (error) {
+                    logger.warn('Could not send startup message to owner:', error.message);
                 }
-            } catch (error) {
-                logger.error('Failed to generate pairing code:', error.message);
-                logger.info('Connection might not be ready yet, will try again...');
             }
         }
-        
-        // Connection events
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-            
-            logger.info(`Connection update: ${connection}`);
-            
-            if (qr && !config.USE_PAIRING_CODE) {
-                logger.info('📱 QR Code received, scan with WhatsApp:');
-                qrcode.generate(qr, { small: true });
-                
-                if (config.NODE_ENV === 'production') {
-                    logger.warn('⚠️  Running in production without pairing code setup!');
-                    logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
-                }
-            }
-            
-            if (connection === 'close') {
-                isConnecting = false;
-                
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                
-                logger.info(`Connection closed. Status code: ${statusCode}`);
-                logger.info('Disconnect reason:', lastDisconnect?.error?.message || 'Unknown');
-                
-                if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                    reconnectAttempts++;
-                    const delay = Math.min(reconnectAttempts * 2000, 10000);
-                    
-                    logger.info(`🔄 Reconnecting in ${delay/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-                    setTimeout(() => createBot(), delay);
-                } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                    logger.error('❌ Max reconnection attempts reached. Manual restart required.');
-                    process.exit(1);
-                } else {
-                    logger.info('❌ Logged out. Please restart the bot to authenticate again.');
-                    if (config.AUTO_RESTART_ON_LOGOUT) {
-                        logger.info('🔄 Auto-restart enabled, restarting in 10 seconds...');
-                        setTimeout(() => {
-                            process.exit(0);
-                        }, 10000);
-                    } else {
-                        process.exit(0);
-                    }
-                }
-            } else if (connection === 'open') {
-                isConnecting = false;
-                reconnectAttempts = 0;
-                
-                logger.info('✅ Connected to WhatsApp successfully!');
-                logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
-                logger.info(`👤 Connected as: ${sock.user?.name || 'Unknown'} (${sock.user?.id || 'Unknown'})`);
-                logger.info(`🗄️  Database: ${db.getConnectionInfo().connected ? 'PostgreSQL Connected ✅' : 'Database Disconnected ❌'}`);
-                
-                // Send startup message to owner
-                if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
-                    try {
-                        await delay(2000);
-                        
-                        const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
-                        const dbStats = await db.getStats();
-                        
-                        await sock.sendMessage(ownerJid, {
-                            text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
-                                  `📅 Started: ${new Date().toLocaleString()}\n` +
-                                  `🔧 Prefix: ${config.PREFIX}\n` +
-                                  `🌐 Environment: ${config.NODE_ENV}\n` +
-                                  `⚡ Node.js: ${process.version}\n` +
-                                  `👤 Connected as: ${sock.user?.name || 'Bot'}\n\n` +
-                                  `🗄️  *DATABASE STATUS*\n` +
-                                  `📊 PostgreSQL: ${dbStats.connected ? '✅ Connected' : '❌ Disconnected'}\n` +
-                                  `🏷️  Database: ${config.DATABASE_NAME}\n` +
-                                  `👥 Users: ${dbStats.users}\n` +
-                                  `📋 Groups: ${dbStats.groups}\n` +
-                                  `💰 Total Wealth: ₦${dbStats.totalWealth.toLocaleString()}\n\n` +
-                                  `✅ All systems operational!\n` +
-                                  `Type ${config.PREFIX}help to see available commands.`
-                        });
-                        logger.info('📨 Startup notification sent to owner');
-                    } catch (error) {
-                        logger.warn('Could not send startup message to owner:', error.message);
-                    }
-                }
-            } else if (connection === 'connecting') {
-                logger.info('🔄 Connecting to WhatsApp...');
-            }
-        });
-        
-        // Credentials update
-        sock.ev.on('creds.update', saveCreds);
-        
-        // Message events
-        sock.ev.on('messages.upsert', async (messageUpdate) => {
-            try {
-                await messageHandler.handle(messageUpdate);
-            } catch (error) {
-                logger.error('Error handling message:', error);
-            }
-        });
-        
-        // Other events
-        sock.ev.on('group-participants.update', async (update) => {
-            try {
-                await eventHandler.handleGroupUpdate(update);
-            } catch (error) {
-                logger.error('Error handling group update:', error);
-            }
-        });
-        
-        sock.ev.on('messages.reaction', async (reaction) => {
-            try {
-                await eventHandler.handleReaction(reaction);
-            } catch (error) {
-                logger.error('Error handling reaction:', error);
-            }
-        });
-        
-        // Database health check interval
-        setInterval(async () => {
-            try {
-                const isHealthy = await db.healthCheck();
-                if (!isHealthy) {
-                    logger.warn('⚠️  Database connection lost, attempting to reconnect...');
-                    await connectToPostgreSQL();
-                }
-            } catch (error) {
-                logger.error('Database health check failed:', error);
-            }
-        }, 30000); // Check every 30 seconds
-        
-        // Presence update with connection check
-        const presenceInterval = setInterval(async () => {
-            try {
-                if (sock.ws?.readyState === 1 && connection === 'open') {
-                    await sock.sendPresenceUpdate('available');
-                }
-            } catch (error) {
-                // Ignore presence update errors
-            }
-        }, 60000);
-        
-        // Clean up interval on disconnect
-        sock.ev.on('connection.update', (update) => {
-            if (update.connection === 'close') {
-                clearInterval(presenceInterval);
-            }
-        });
-        
-        return sock;
-        
-    } catch (error) {
-        isConnecting = false;
-        logger.error('Error creating bot:', error);
-        
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
-            const delayTime = Math.min(reconnectAttempts * 3000, 15000);
-            logger.info(`🔄 Retrying bot creation in ${delayTime/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-            setTimeout(() => createBot(), delayTime);
-        } else {
-            logger.error('❌ Max creation attempts reached. Exiting...');
-            process.exit(1);
+    });
+    
+    // Credentials update
+    sock.ev.on('creds.update', saveCreds);
+    
+    // Message events
+    sock.ev.on('messages.upsert', async (messageUpdate) => {
+        await messageHandler.handle(messageUpdate);
+    });
+    
+    // Other events
+    sock.ev.on('group-participants.update', async (update) => {
+        await eventHandler.handleGroupUpdate(update);
+    });
+    
+    sock.ev.on('messages.reaction', async (reaction) => {
+        await eventHandler.handleReaction(reaction);
+    });
+    
+    // Presence update
+    setInterval(async () => {
+        try {
+            await sock.sendPresenceUpdate('available');
+        } catch (error) {
+            // Ignore presence update errors
         }
-    }
-}
-
-// Helper function to send pairing code notification
-async function sendPairingCodeNotification(code, phoneNumber) {
-    try {
-        if (config.WEBHOOK_URL) {
-            const response = await fetch(config.WEBHOOK_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    type: 'pairing_code',
-                    code: code,
-                    phone_number: phoneNumber,
-                    timestamp: new Date().toISOString(),
-                    bot_name: config.BOT_NAME
-                })
-            });
-            
-            if (response.ok) {
-                logger.info('📤 Pairing code notification sent to webhook');
-            }
-        }
-    } catch (error) {
-        logger.warn('Failed to send pairing code notification:', error.message);
-    }
+    }, 60000); // Update presence every minute
+    
+    return sock;
 }
