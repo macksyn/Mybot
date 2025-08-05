@@ -32,6 +32,8 @@ export class MessageHandler {
         this.plugins.set('ping', pingPlugin);
         this.plugins.set('help', helpPlugin);
         this.plugins.set('info', infoPlugin);
+        // Add this line for debugging:
+        this.plugins.set('debug', debugPlugin);
         
         // Economy system plugins
         this.plugins.set('economy', economyPlugin);
