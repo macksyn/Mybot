@@ -32,6 +32,14 @@ export class MessageHandler {
         if (config.ENABLE_WEATHER) {
             this.plugins.set('weather', weatherPlugin);
         }
+
+        if (config.ENABLE_ECONOMY) {
+            this.plugins.set('economy', economyPlugin);
+        }
+
+        if (config.ENABLE_ATTENDANCE) {
+            this.plugins.set('attendance', attendancePlugin);
+        }
         
         if (config.ENABLE_JOKES) {
             this.plugins.set('joke', jokePlugin);
