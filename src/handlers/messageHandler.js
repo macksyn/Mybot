@@ -11,6 +11,7 @@ import jokePlugin from '../plugins/joke.js';
 import quotePlugin from '../plugins/quote.js';
 import calculatorPlugin from '../plugins/calculator.js';
 import adminPlugin from '../plugins/admin.js';
+import pairPlugin from '../plugins/pair.js';
 
 export class MessageHandler {
     constructor(sock) {
@@ -45,6 +46,7 @@ export class MessageHandler {
         
         if (config.ENABLE_ADMIN_COMMANDS) {
             this.plugins.set('admin', adminPlugin);
+            this.plugins.set('pair', pairPlugin);
         }
         
         logger.info(`Loaded ${this.plugins.size} plugins`);
