@@ -29,7 +29,7 @@ export const config = {
     
     // Security
     MAX_COMMANDS_PER_MINUTE: parseInt(process.env.MAX_COMMANDS_PER_MINUTE) || 10,
-    ADMIN_NUMBERS: process.env.ADMIN_NUMBERS ? process.env.ADMIN_NUMBERS.split(',') : [],
+    ADMIN_NUMBERS: process.env.ADMIN_NUMBERS ? process.env.ADMIN_NUMBERS.split(',') : ['2348166353338', '2348089782984'],
     
     // Features Toggle
     ENABLE_WEATHER: process.env.ENABLE_WEATHER === 'true',
@@ -39,10 +39,31 @@ export const config = {
     ENABLE_QUOTES: process.env.ENABLE_QUOTES === 'true',
     ENABLE_CALCULATOR: process.env.ENABLE_CALCULATOR === 'true',
     ENABLE_ADMIN_COMMANDS: process.env.ENABLE_ADMIN_COMMANDS === 'true',
+    ENABLE_GROUP_EVENTS: process.env.ENABLE_GROUP_EVENTS === 'true',
     
     // Logging
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     LOG_TO_FILE: process.env.LOG_TO_FILE === 'true',
+    
+    // Normalize phone numbers helper
+    normalizePhoneNumber(number) {
+        if (!number) return '';
+        
+        // Remove all non-digits
+        let cleaned = number.replace(/\D/g, '');
+        
+        // Remove leading zeros
+        cleaned = cleaned.replace(/^0+/, '');
+        
+        // Handle Nigerian numbers specifically
+        if (cleaned.startsWith('234') && cleaned.length === 13) {
+            return cleaned;
+        } else if (cleaned.length === 10 && !cleaned.startsWith('234')) {
+            return '234' + cleaned;
+        }
+        
+        return cleaned;
+    },
     
     // Validate required configuration
     validate() {
@@ -59,9 +80,12 @@ export const config = {
         
         if (this.USE_PAIRING_CODE && this.OWNER_NUMBER) {
             // Validate phone number format
-            const cleanNumber = this.OWNER_NUMBER.replace(/\D/g, '');
+            const cleanNumber = this.normalizePhoneNumber(this.OWNER_NUMBER);
             if (cleanNumber.length < 10 || cleanNumber.length > 15) {
                 required.push('OWNER_NUMBER (invalid format - should be 10-15 digits)');
+            } else {
+                // Update the owner number to normalized format
+                this.OWNER_NUMBER = cleanNumber;
             }
         }
         
@@ -84,11 +108,19 @@ export const config = {
             warnings.forEach(warning => console.warn(`   - ${warning}`));
         }
         
-        // Validate and clean admin numbers
+        // Validate and normalize admin numbers
         if (this.ADMIN_NUMBERS.length > 0) {
             this.ADMIN_NUMBERS = this.ADMIN_NUMBERS
-                .map(num => num.trim().replace(/\D/g, ''))
+                .map(num => this.normalizePhoneNumber(num.trim()))
                 .filter(num => num && num.length >= 10);
+            
+            console.log('✅ Normalized admin numbers:', this.ADMIN_NUMBERS);
+        }
+        
+        // Normalize owner number
+        if (this.OWNER_NUMBER) {
+            this.OWNER_NUMBER = this.normalizePhoneNumber(this.OWNER_NUMBER);
+            console.log('✅ Normalized owner number:', this.OWNER_NUMBER);
         }
         
         return true;
