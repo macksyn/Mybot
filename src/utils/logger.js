@@ -98,9 +98,37 @@ if (config.LOG_TO_FILE) {
     );
 }
 
+// Add custom log levels to support trace
+const customLevels = {
+    levels: {
+        error: 0,
+        warn: 1,
+        info: 2,
+        http: 3,
+        verbose: 4,
+        debug: 5,
+        trace: 6,
+        silly: 7
+    },
+    colors: {
+        error: 'red',
+        warn: 'yellow',
+        info: 'green',
+        http: 'magenta',
+        verbose: 'cyan',
+        debug: 'blue',
+        trace: 'gray',
+        silly: 'rainbow'
+    }
+};
+
+// Add colors to winston
+winston.addColors(customLevels.colors);
+
 // Create logger instance
 export const logger = winston.createLogger({
     level: config.LOG_LEVEL || 'info',
+    levels: customLevels.levels,
     format: combine(
         errors({ stack: true }),
         timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
