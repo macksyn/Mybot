@@ -33,6 +33,8 @@ export const config = {
     
     // Features Toggle
     ENABLE_WEATHER: process.env.ENABLE_WEATHER === 'true',
+    ENABLE_ECONOMY: process.env.ENABLE_ECONOMY === 'true',
+    ENABLE_ATTENDANCE: process.env.ENABLE_ATTENDANCE === 'true',
     ENABLE_JOKES: process.env.ENABLE_JOKES === 'true',
     ENABLE_QUOTES: process.env.ENABLE_QUOTES === 'true',
     ENABLE_CALCULATOR: process.env.ENABLE_CALCULATOR === 'true',
