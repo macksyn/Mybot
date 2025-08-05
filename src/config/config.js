@@ -5,6 +5,14 @@ export const config = {
     OWNER_NUMBER: process.env.OWNER_NUMBER || '',
     TIMEZONE: process.env.TIMEZONE || 'UTC',
     
+    // Authentication Method
+    USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
+    SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'false', // Default true
+    AUTO_RESTART_ON_LOGOUT: process.env.AUTO_RESTART_ON_LOGOUT === 'true',
+    
+    // Webhook for notifications (optional)
+    WEBHOOK_URL: process.env.WEBHOOK_URL || '',
+    
     // API Keys
     OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY || '',
     QUOTE_API_KEY: process.env.QUOTE_API_KEY || '',
@@ -37,17 +45,48 @@ export const config = {
     // Validate required configuration
     validate() {
         const required = [];
+        const warnings = [];
         
         if (!this.BOT_NAME) required.push('BOT_NAME');
         if (!this.PREFIX) required.push('PREFIX');
+        
+        // Pairing code validation
+        if (this.USE_PAIRING_CODE && !this.OWNER_NUMBER) {
+            required.push('OWNER_NUMBER (required when USE_PAIRING_CODE=true)');
+        }
+        
+        if (this.USE_PAIRING_CODE && this.OWNER_NUMBER) {
+            // Validate phone number format
+            const cleanNumber = this.OWNER_NUMBER.replace(/\D/g, '');
+            if (cleanNumber.length < 10 || cleanNumber.length > 15) {
+                required.push('OWNER_NUMBER (invalid format - should be 10-15 digits)');
+            }
+        }
+        
+        // Warnings for production
+        if (this.NODE_ENV === 'production') {
+            if (!this.OWNER_NUMBER) {
+                warnings.push('OWNER_NUMBER not set - admin features will be limited');
+            }
+            if (!this.USE_PAIRING_CODE) {
+                warnings.push('USE_PAIRING_CODE=false - QR code scanning required (not ideal for cloud deployment)');
+            }
+        }
         
         if (required.length > 0) {
             throw new Error(`Missing required configuration: ${required.join(', ')}`);
         }
         
-        // Validate admin numbers format
+        if (warnings.length > 0) {
+            console.warn('⚠️  Configuration warnings:');
+            warnings.forEach(warning => console.warn(`   - ${warning}`));
+        }
+        
+        // Validate and clean admin numbers
         if (this.ADMIN_NUMBERS.length > 0) {
-            this.ADMIN_NUMBERS = this.ADMIN_NUMBERS.map(num => num.trim()).filter(num => num);
+            this.ADMIN_NUMBERS = this.ADMIN_NUMBERS
+                .map(num => num.trim().replace(/\D/g, ''))
+                .filter(num => num && num.length >= 10);
         }
         
         return true;
