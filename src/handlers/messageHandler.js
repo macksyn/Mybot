@@ -15,6 +15,7 @@ import adminPlugin from '../plugins/admin.js';
 import pairPlugin from '../plugins/pair.js';
 import debugPlugin from '../plugins/debug.js';
 import migratePlugin from '../plugins/migrate.js';
+import sessiontestPlugin from '../plugins/sessiontest.js';
 
 // Import new plugins
 import economyPlugin from '../plugins/economy.js';
@@ -98,6 +99,7 @@ export class MessageHandler {
         this.plugins.set('debug', debugPlugin);
         this.plugins.set('migrate', migratePlugin);
         this.plugins.set('testperms', testPermsPlugin);
+        this.sessiontest.set('testperms', sessiontestPlugin);
         
         // Economy system plugins
         this.plugins.set('economy', economyPlugin);
