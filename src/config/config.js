@@ -6,12 +6,12 @@ export const config = {
     
     // Authentication Method - SEPARATE from admin/owner
     USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
-    PAIRING_NUMBER: process.env.PAIRING_NUMBER || process.env.OWNER_NUMBER || '2348089782988', // Separate pairing number
+    PAIRING_NUMBER: process.env.PAIRING_NUMBER || process.env.OWNER_NUMBER || '2348166353338', // Separate pairing number
     SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'false', // Default true
     AUTO_RESTART_ON_LOGOUT: process.env.AUTO_RESTART_ON_LOGOUT === 'true',
     
     // Admin/Owner Configuration - SEPARATE from pairing
-    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
+    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348089782988',
     ADMIN_NUMBERS: process.env.ADMIN_NUMBERS ? process.env.ADMIN_NUMBERS.split(',') : ['2348166353338', '2348089782988'],
     
     // Webhook for notifications (optional)
@@ -23,7 +23,7 @@ export const config = {
     
     // Database
     DATABASE_URL: process.env.DATABASE_URL || 'sqlite:./database.db',
-    MONGODB_URI: process.env.MONGODB_URI || '',
+    MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://macksyn:mygroqdatabase1234@groq.lm0dims.mongodb.net/?retryWrites=true&w=majority&appName=Groq',
     
     // Environment
     NODE_ENV: process.env.NODE_ENV || 'development',
