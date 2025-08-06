@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger.js';
 import { parseCommand, checkRateLimit, getMessageContent, getSenderId } from '../utils/helpers.js';
 import { config } from '../config/config.js';
+import { db } from '../utils/database.js';
 
 // Import plugins
 import pingPlugin from '../plugins/ping.js';
@@ -20,6 +21,66 @@ import economyPlugin from '../plugins/economy.js';
 import attendancePlugin from '../plugins/attendance.js';
 import birthdayPlugin from '../plugins/birthday.js';
 
+// Test plugin for permissions
+const testPermsPlugin = {
+    name: 'testperms',
+    description: 'Test permission system and provide setup guidance',
+    usage: '!testperms',
+    category: 'debug',
+    
+    async execute(context) {
+        const { reply, senderId } = context;
+        const { isOwner, isAdmin, extractPhoneFromJid, normalizePhoneNumber, debugUserPermissions, validateUserPermissions } = await import('../utils/helpers.js');
+        
+        // Get permission validation details
+        const validation = validateUserPermissions(senderId);
+        
+        // Debug to console
+        debugUserPermissions(senderId);
+        
+        const testResults = `🔍 *Permission Test Results*\n\n` +
+                           `👤 *Your Identity:*\n` +
+                           `• Sender ID: \`${validation.senderId}\`\n` +
+                           `• Phone: \`${validation.senderPhone}\`\n` +
+                           `• Normalized: \`${validation.normalizedSender}\`\n\n` +
+                           `🔐 *Current Permissions:*\n` +
+                           `• Owner: ${validation.isOwner ? '✅ YES' : '❌ NO'}\n` +
+                           `• Admin: ${validation.isAdmin ? '✅ YES' : '❌ NO'}\n\n` +
+                           `⚙️ *Current Config:*\n` +
+                           `• Owner Number: \`${config.OWNER_NUMBER || 'Not set'}\`\n` +
+                           `• Admin Numbers: \`${config.ADMIN_NUMBERS?.length ? config.ADMIN_NUMBERS.join(', ') : 'None'}\`\n\n` +
+                           `${(!validation.isOwner && !validation.isAdmin) ? 
+                             `🔧 *Setup Instructions:*\n\n` +
+                             `*To make you the owner:*\n` +
+                             `Add to .env: \`OWNER_NUMBER=${validation.normalizedSender}\`\n\n` +
+                             `*To add you as admin:*\n` +
+                             `Add to .env: \`ADMIN_NUMBERS=${validation.normalizedSender}\`\n\n` +
+                             `*Current admin list + you:*\n` +
+                             `\`ADMIN_NUMBERS=${config.ADMIN_NUMBERS?.length ? config.ADMIN_NUMBERS.join(',') + ',' : ''}${validation.normalizedSender}\`\n\n` +
+                             `After updating .env, restart the bot.` :
+                             `✅ *Permissions are working correctly!*\n\n` +
+                             `You have the necessary permissions to use admin commands.`
+                           }\n\n` +
+                           `💡 *Debug info logged to console for troubleshooting.*`;
+        
+        await reply(testResults);
+        
+        // If user has permissions, show additional admin info
+        if (validation.isOwner || validation.isAdmin) {
+            setTimeout(async () => {
+                const adminInfo = `🎉 *Admin Features Available:*\n\n` +
+                                 `• \`${config.PREFIX}admin\` - Admin panel\n` +
+                                 `• \`${config.PREFIX}debug\` - Debug tools\n` +
+                                 `• \`${config.PREFIX}migrate\` - Data management ${validation.isOwner ? '' : '(owner only)'}\n` +
+                                 `• \`${config.PREFIX}pair\` - Pairing management\n\n` +
+                                 `${validation.isOwner ? '👑 You have full owner privileges!' : '👥 You have admin privileges!'}`;
+                
+                await reply(adminInfo);
+            }, 2000);
+        }
+    }
+};
+
 export class MessageHandler {
     constructor(sock) {
         this.sock = sock;
@@ -34,9 +95,9 @@ export class MessageHandler {
         this.plugins.set('ping', pingPlugin);
         this.plugins.set('help', helpPlugin);
         this.plugins.set('info', infoPlugin);
-        // Add this line for debugging:
         this.plugins.set('debug', debugPlugin);
         this.plugins.set('migrate', migratePlugin);
+        this.plugins.set('testperms', testPermsPlugin);
         
         // Economy system plugins
         this.plugins.set('economy', economyPlugin);
@@ -144,6 +205,13 @@ export class MessageHandler {
             
             const senderId = getSenderId(message);
             
+            // Increment message count
+            try {
+                await db.incrementMessageCount();
+            } catch (error) {
+                logger.debug('Could not increment message count:', error.message);
+            }
+            
             // Create base context object
             const context = {
                 sock: this.sock,
@@ -201,9 +269,16 @@ export class MessageHandler {
             if (!plugin) {
                 // Send a helpful message for unknown commands
                 await this.sock.sendMessage(message.key.remoteJid, {
-                    text: `❓ Unknown command: *${command}*\n\nType *${config.PREFIX}help* to see available commands.`
+                    text: `❓ Unknown command: *${command}*\n\nType *${config.PREFIX}help* to see available commands.\n\n💡 Tip: Use *${config.PREFIX}testperms* to test admin permissions.`
                 }, { quoted: message });
                 return;
+            }
+            
+            // Increment command count
+            try {
+                await db.incrementCommandCount();
+            } catch (error) {
+                logger.debug('Could not increment command count:', error.message);
             }
             
             // Add command-specific context
