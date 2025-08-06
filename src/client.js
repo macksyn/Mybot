@@ -19,30 +19,24 @@ export async function createBot() {
     isConnecting = true;
     
     try {
-        logger.info('🔍 Checking for existing session...');
+        logger.info('🔍 Starting WhatsApp connection...');
         
-        // Simple logic: Try local first, then MongoDB, then fresh
-        const fs = await import('fs/promises');
-        let hasLocalSession = false;
-        
-        try {
-            await fs.access('./sessions/creds.json');
-            hasLocalSession = true;
-            logger.info('📁 Local session found');
-        } catch {
-            // No local session - try MongoDB ONLY on deployment (not reconnections)
-            if (config.PERSIST_SESSIONS && reconnectAttempts === 0) {
-                logger.info('📥 No local session, trying MongoDB...');
+        // SIMPLIFIED: Only restore from MongoDB on first start (not reconnections)
+        if (config.PERSIST_SESSIONS && reconnectAttempts === 0) {
+            logger.info('📥 Checking for saved session...');
+            try {
                 const restored = await sessionManager.loadSession();
                 if (restored) {
                     logger.info('✅ Session restored from MongoDB');
-                    await delay(2000);
                 } else {
-                    logger.info('📭 No saved session found, will create new');
+                    logger.info('📭 No saved session found');
                 }
+            } catch (error) {
+                logger.warn('Session restore failed:', error.message);
             }
         }
         
+        // Use local sessions (this is the primary session storage)
         const { state, saveCreds } = await useMultiFileAuthState('./sessions');
         const { version, isLatest } = await fetchLatestBaileysVersion();
         
@@ -70,23 +64,23 @@ export async function createBot() {
         const messageHandler = new MessageHandler(sock);
         const eventHandler = new EventHandler(sock);
         
-        // Handle pairing code for fresh sessions
-        if (config.USE_PAIRING_CODE && config.PAIRING_NUMBER && !sock.authState.creds.registered) {
-            logger.info('🔗 Fresh session detected, generating pairing code...');
+        // Handle pairing ONLY for completely fresh sessions
+        if (config.USE_PAIRING_CODE && config.PAIRING_NUMBER && !state.creds.registered) {
+            logger.info('🔗 Fresh session - requesting pairing code...');
             await delay(3000);
             
             try {
                 const phoneNumber = config.PAIRING_NUMBER.replace(/\D/g, '');
                 const code = await sock.requestPairingCode(phoneNumber);
                 logger.info(`📱 Pairing Code: ${code}`);
-                logger.info(`📞 Enter in WhatsApp: Settings > Linked Devices > Link a Device > Link with phone number`);
-                logger.info(`⏰ Code expires in ~20 seconds!`);
+                logger.info(`📞 Go to WhatsApp > Settings > Linked Devices > Link a Device > Link with phone number`);
+                logger.info(`⏰ Enter code quickly - it expires in ~20 seconds!`);
             } catch (error) {
                 logger.error('Pairing code error:', error.message);
             }
         }
         
-        // Simple credential saving
+        // Save credentials when they change
         sock.ev.on('creds.update', async () => {
             await saveCreds();
         });
@@ -95,7 +89,9 @@ export async function createBot() {
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
             
+            // Show QR code only if pairing code is disabled
             if (qr && !config.USE_PAIRING_CODE) {
+                logger.info('📱 QR Code:');
                 qrcode.generate(qr, { small: true });
             }
             
@@ -106,16 +102,31 @@ export async function createBot() {
                 logger.info(`Connection closed. Status: ${statusCode}`);
                 
                 if (statusCode === 401) {
-                    // Auth failed - clear everything and start fresh
-                    logger.error('❌ Authentication failed - clearing session');
-                    await sessionManager.deleteSession();
+                    // Authentication failed - clear everything
+                    logger.error('❌ Authentication failed - clearing sessions');
                     
-                    if (reconnectAttempts < 1) { // Only retry once for auth failures
+                    try {
+                        // Clear local session
+                        const fs = await import('fs');
+                        if (fs.existsSync('./sessions')) {
+                            fs.rmSync('./sessions', { recursive: true, force: true });
+                        }
+                        
+                        // Clear MongoDB session
+                        if (config.PERSIST_SESSIONS) {
+                            await sessionManager.deleteSession();
+                        }
+                    } catch (error) {
+                        logger.warn('Session cleanup error:', error.message);
+                    }
+                    
+                    // Only retry once for auth failures
+                    if (reconnectAttempts < 1) {
                         reconnectAttempts++;
                         logger.info('🔄 Retrying with fresh session in 30 seconds...');
                         setTimeout(() => createBot(), 30000);
                     } else {
-                        logger.error('❌ Auth failed after retry. Manual restart needed.');
+                        logger.error('❌ Max auth retries reached. Please restart manually.');
                         process.exit(1);
                     }
                     return;
@@ -136,23 +147,23 @@ export async function createBot() {
                 isConnecting = false;
                 reconnectAttempts = 0;
                 
-                logger.info('✅ Connected to WhatsApp!');
+                logger.info('✅ Connected to WhatsApp successfully!');
                 logger.info(`🤖 ${config.BOT_NAME} is online`);
                 logger.info(`👤 Logged in as: ${sock.user?.name || 'Unknown'}`);
                 
-                // SIMPLE: Save session once after successful connection
+                // Save session to MongoDB after successful connection
                 if (config.PERSIST_SESSIONS) {
                     setTimeout(async () => {
                         try {
                             await sessionManager.saveSession();
                             logger.info('💾 Session saved to MongoDB');
                         } catch (error) {
-                            logger.warn('Could not save session:', error.message);
+                            logger.warn('Could not save session to MongoDB:', error.message);
                         }
-                    }, 10000); // 10 second delay
+                    }, 10000);
                 }
                 
-                // Send ready message
+                // Send startup message
                 if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
                     setTimeout(async () => {
                         try {
