@@ -19,14 +19,26 @@ export async function createBot() {
     isConnecting = true;
     
     try {
-        // Try to load existing session from MongoDB first
+        // FIXED: Load session from MongoDB ONLY if no local session exists
         logger.info('🔍 Checking for existing session...');
-        const sessionLoaded = await sessionManager.loadSession();
         
-        if (sessionLoaded) {
-            logger.info('✅ Existing session found and loaded from MongoDB');
-        } else {
-            logger.info('📭 No existing session found, will create new one');
+        let sessionLoadedFromMongo = false;
+        try {
+            // Check if local session files exist first
+            const fs = await import('fs/promises');
+            await fs.access('./sessions');
+            logger.info('📁 Local session files found, using local session');
+        } catch {
+            // No local session, try loading from MongoDB
+            logger.info('📭 No local session found, attempting MongoDB restore...');
+            sessionLoadedFromMongo = await sessionManager.loadSession();
+            if (sessionLoadedFromMongo) {
+                logger.info('✅ Session restored from MongoDB');
+                // Add delay to let files settle
+                await delay(2000);
+            } else {
+                logger.info('📭 No session found in MongoDB either, will create new session');
+            }
         }
         
         const { state, saveCreds } = await useMultiFileAuthState('./sessions');
@@ -55,8 +67,9 @@ export async function createBot() {
             emitOwnEvents: false,
             retryRequestDelayMs: 250,
             maxMsgRetryCount: 5,
+            // FIXED: Better message retrieval to avoid conflicts
             getMessage: async (key) => {
-                return { conversation: 'Hello!' };
+                return undefined; // Return undefined instead of dummy message
             }
         });
         
@@ -69,7 +82,7 @@ export async function createBot() {
             logger.info('🔗 Bot not registered, preparing pairing code...');
             
             // Add delay before requesting pairing code
-            await delay(1500);
+            await delay(2000);
             
             try {
                 const phoneNumber = config.PAIRING_NUMBER.replace(/\D/g, '');
@@ -91,18 +104,26 @@ export async function createBot() {
             }
         }
         
-        // Enhanced credentials update with session persistence
+        // FIXED: Enhanced credentials update with delayed session persistence
+        let credentialsSaveTimeout = null;
         sock.ev.on('creds.update', async () => {
             await saveCreds();
             
-            // Auto-save to MongoDB after credentials update
-            if (config.PERSIST_SESSIONS) {
-                try {
-                    await sessionManager.saveSession();
-                    logger.debug('📁 Session auto-saved to MongoDB');
-                } catch (error) {
-                    logger.debug('Session auto-save failed:', error.message);
-                }
+            // FIXED: Debounced auto-save to MongoDB to prevent conflicts
+            if (config.PERSIST_SESSIONS && credentialsSaveTimeout === null) {
+                credentialsSaveTimeout = setTimeout(async () => {
+                    try {
+                        // Only save if connection is stable
+                        if (sock.ws?.readyState === 1) {
+                            await sessionManager.saveSession();
+                            logger.debug('📁 Session auto-saved to MongoDB');
+                        }
+                    } catch (error) {
+                        logger.debug('Session auto-save failed:', error.message);
+                    } finally {
+                        credentialsSaveTimeout = null;
+                    }
+                }, 5000); // 5-second delay
             }
         });
         
@@ -131,12 +152,31 @@ export async function createBot() {
                 logger.info(`Connection closed. Status code: ${statusCode}`);
                 logger.info('Disconnect reason:', lastDisconnect?.error?.message || 'Unknown');
                 
+                // FIXED: Handle 401 errors specifically
+                if (statusCode === 401) {
+                    logger.error('❌ Authentication failed (401). Session may be corrupted.');
+                    
+                    // Clear both local and MongoDB sessions for fresh start
+                    logger.info('🗑️ Clearing corrupted session...');
+                    await sessionManager.deleteSession();
+                    
+                    if (reconnectAttempts < 2) { // Only retry twice for 401 errors
+                        reconnectAttempts++;
+                        logger.info(`🔄 Retrying with fresh session in 10 seconds... (Attempt ${reconnectAttempts}/2)`);
+                        setTimeout(() => createBot(), 10000);
+                    } else {
+                        logger.error('❌ Max authentication attempts reached. Manual restart required.');
+                        process.exit(1);
+                    }
+                    return;
+                }
+                
                 if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
                     reconnectAttempts++;
-                    const delay = Math.min(reconnectAttempts * 2000, 10000); // Exponential backoff, max 10s
+                    const delayTime = Math.min(reconnectAttempts * 2000, 10000); // Exponential backoff, max 10s
                     
-                    logger.info(`🔄 Reconnecting in ${delay/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-                    setTimeout(() => createBot(), delay);
+                    logger.info(`🔄 Reconnecting in ${delayTime/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                    setTimeout(() => createBot(), delayTime);
                 } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                     logger.error('❌ Max reconnection attempts reached. Manual restart required.');
                     process.exit(1);
@@ -169,42 +209,45 @@ export async function createBot() {
                 logger.info(`👑 Owner Number: ${config.OWNER_NUMBER}`);
                 logger.info(`👥 Admin Numbers: ${config.ADMIN_NUMBERS.join(', ')}`);
                 
-                // Save successful session to MongoDB
+                // FIXED: Save successful session to MongoDB with delay
                 if (config.PERSIST_SESSIONS) {
-                    try {
-                        await sessionManager.saveSession();
-                        logger.info('💾 Session saved to MongoDB for persistence');
-                        
-                        // Start auto-save
-                        sessionManager.startAutoSave();
-                    } catch (error) {
-                        logger.warn('Could not save session to MongoDB:', error.message);
-                    }
+                    // Wait a bit for connection to fully stabilize
+                    setTimeout(async () => {
+                        try {
+                            await sessionManager.saveSession();
+                            logger.info('💾 Session saved to MongoDB for persistence');
+                            
+                            // Start auto-save only after initial save
+                            sessionManager.startAutoSave();
+                        } catch (error) {
+                            logger.warn('Could not save session to MongoDB:', error.message);
+                        }
+                    }, 10000); // 10-second delay
                 }
                 
                 // Send startup message to owner (not pairing number)
                 if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
-                    try {
-                        // Add delay before sending startup message
-                        await delay(2000);
-                        
-                        const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
-                        await sock.sendMessage(ownerJid, {
-                            text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
-                                  `📅 Started: ${new Date().toLocaleString()}\n` +
-                                  `🔧 Prefix: ${config.PREFIX}\n` +
-                                  `🌐 Environment: ${config.NODE_ENV}\n` +
-                                  `⚡ Node.js: ${process.version}\n` +
-                                  `👤 Connected as: ${sock.user?.name || 'Bot'}\n` +
-                                  `💾 Session Persistence: ${config.PERSIST_SESSIONS ? '✅ Enabled' : '❌ Disabled'}\n` +
-                                  `📱 Logged in via: ${config.PAIRING_NUMBER}\n\n` +
-                                  `✅ All systems operational!\n` +
-                                  `Type ${config.PREFIX}help to see available commands.`
-                        });
-                        logger.info('📨 Startup notification sent to owner');
-                    } catch (error) {
-                        logger.warn('Could not send startup message to owner:', error.message);
-                    }
+                    // Wait for connection to fully stabilize before sending messages
+                    setTimeout(async () => {
+                        try {
+                            const ownerJid = config.OWNER_NUMBER.replace(/\D/g, '') + '@s.whatsapp.net';
+                            await sock.sendMessage(ownerJid, {
+                                text: `🤖 *${config.BOT_NAME}* is now online!\n\n` +
+                                      `📅 Started: ${new Date().toLocaleString()}\n` +
+                                      `🔧 Prefix: ${config.PREFIX}\n` +
+                                      `🌐 Environment: ${config.NODE_ENV}\n` +
+                                      `⚡ Node.js: ${process.version}\n` +
+                                      `👤 Connected as: ${sock.user?.name || 'Bot'}\n` +
+                                      `💾 Session Persistence: ${config.PERSIST_SESSIONS ? '✅ Enabled' : '❌ Disabled'}\n` +
+                                      `📱 Logged in via: ${config.PAIRING_NUMBER}\n\n` +
+                                      `✅ All systems operational!\n` +
+                                      `Type ${config.PREFIX}help to see available commands.`
+                            });
+                            logger.info('📨 Startup notification sent to owner');
+                        } catch (error) {
+                            logger.warn('Could not send startup message to owner:', error.message);
+                        }
+                    }, 15000); // 15-second delay
                 }
             } else if (connection === 'connecting') {
                 logger.info('🔄 Connecting to WhatsApp...');
@@ -237,14 +280,15 @@ export async function createBot() {
             }
         });
         
-        // Presence update with connection check
+        // FIXED: Improved presence update with better connection checking
         const presenceInterval = setInterval(async () => {
             try {
                 if (sock.ws?.readyState === 1 && connection === 'open') {
                     await sock.sendPresenceUpdate('available');
                 }
             } catch (error) {
-                // Ignore presence update errors
+                // Ignore presence update errors, but log for debugging
+                logger.debug('Presence update failed:', error.message);
             }
         }, 60000);
         
@@ -252,6 +296,10 @@ export async function createBot() {
         sock.ev.on('connection.update', (update) => {
             if (update.connection === 'close') {
                 clearInterval(presenceInterval);
+                if (credentialsSaveTimeout) {
+                    clearTimeout(credentialsSaveTimeout);
+                    credentialsSaveTimeout = null;
+                }
             }
         });
         
