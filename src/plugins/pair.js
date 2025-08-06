@@ -31,11 +31,11 @@ export default {
                 }
             } else {
                 // Use owner number from config
-                if (!config.OWNER_NUMBER) {
-                    await reply('❌ No phone number provided and OWNER_NUMBER not configured.');
+                if (!config.PAIRING_NUMBER) {
+                    await reply('❌ No phone number provided and PAIRING_NUMBER not configured.');
                     return;
                 }
-                phoneNumber = config.OWNER_NUMBER;
+                phoneNumber = config.PAIRING_NUMBER;
             }
             
             await reply('🔄 Generating pairing code...');
