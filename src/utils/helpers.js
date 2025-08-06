@@ -464,13 +464,5 @@ export function createMentions(userIds) {
  * Escape markdown characters
  */
 export function escapeMarkdown(text) {
-    return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\
-/**
- * Clean up rate limit map periodically
- */
-setInterval(() => {
-    const now = Date.now();
-    const windowStart = now - 60000;
-    
-    for (const [userId, requests] of rateLimitMap.entries()) {');
+    return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
 }
