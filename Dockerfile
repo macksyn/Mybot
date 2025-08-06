@@ -1,4 +1,4 @@
-# Use Node.js 18 Alpine for smaller image size
+# Use Node.js 20 Alpine for smaller image size
 FROM node:20-alpine
 
 # Set working directory
@@ -22,16 +22,20 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy application code
 COPY . .
 
-# Create sessions directory
-RUN mkdir -p sessions && chmod 755 sessions
+# Create necessary directories with proper permissions
+RUN mkdir -p sessions data backups exports logs && \
+    chmod 755 sessions data backups exports logs
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nextjs -u 1001
 
-# Change ownership of the app directory
+# Change ownership of the app directory and data directories
 RUN chown -R nextjs:nodejs /app
 USER nextjs
+
+# Create volumes for persistent data
+VOLUME ["/app/sessions", "/app/data", "/app/backups"]
 
 # Expose port (Koyeb will set PORT environment variable)
 EXPOSE 3000
