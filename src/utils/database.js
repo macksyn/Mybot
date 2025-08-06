@@ -1,11 +1,10 @@
-// External Database Solution using MongoDB Atlas (Free Tier)
 import { MongoClient } from 'mongodb';
 import { logger } from './logger.js';
 import { config } from '../config/config.js';
 
 /**
  * MongoDB-based persistent storage for free hosting platforms
- * Uses MongoDB Atlas free tier (512MB storage)
+ * Enhanced with better error handling and reconnection logic
  */
 class ExternalDatabase {
     constructor() {
@@ -13,71 +12,263 @@ class ExternalDatabase {
         this.db = null;
         this.isConnected = false;
         this.connectionString = process.env.MONGODB_URI || process.env.DATABASE_URL;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectInterval = 5000;
+        
+        // Cache for frequently accessed data
+        this.cache = new Map();
+        this.cacheTimeout = 30000; // 30 seconds
         
         if (!this.connectionString) {
-            throw new Error('MONGODB_URI or DATABASE_URL environment variable is required');
+            logger.warn('No MongoDB connection string found. Using fallback storage.');
+            this.useFallback = true;
+            this.fallbackData = {
+                users: new Map(),
+                economy: new Map(),
+                groups: new Map(),
+                settings: new Map(),
+                attendance: new Map(),
+                stats: {
+                    commandsExecuted: 0,
+                    messagesReceived: 0,
+                    startTime: Date.now()
+                }
+            };
+            return;
         }
         
         this.init();
     }
     
     async init() {
+        if (this.useFallback) {
+            logger.info('✅ Using fallback in-memory storage');
+            this.isConnected = true;
+            return;
+        }
+        
         try {
+            logger.info('🔗 Connecting to MongoDB...');
+            
             this.client = new MongoClient(this.connectionString, {
                 maxPoolSize: 10,
-                serverSelectionTimeoutMS: 5000,
+                serverSelectionTimeoutMS: 10000,
                 socketTimeoutMS: 45000,
+                connectTimeoutMS: 10000,
+                heartbeatFrequencyMS: 10000,
+                retryWrites: true,
             });
             
             await this.client.connect();
             this.db = this.client.db('whatsapp_bot');
             this.isConnected = true;
+            this.reconnectAttempts = 0;
+            
+            // Test the connection
+            await this.db.admin().ping();
             
             // Create indexes for better performance
             await this.createIndexes();
             
-            logger.info('✅ Connected to external MongoDB database');
+            // Setup connection monitoring
+            this.setupConnectionMonitoring();
+            
+            logger.info('✅ Connected to MongoDB database successfully');
             
         } catch (error) {
-            logger.error('❌ Failed to connect to external database:', error);
-            throw error;
+            logger.error('❌ Failed to connect to MongoDB:', error.message);
+            await this.handleConnectionError(error);
         }
     }
     
+    setupConnectionMonitoring() {
+        if (!this.client) return;
+        
+        this.client.on('close', () => {
+            logger.warn('🔌 MongoDB connection closed');
+            this.isConnected = false;
+            this.scheduleReconnect();
+        });
+        
+        this.client.on('error', (error) => {
+            logger.error('💥 MongoDB connection error:', error.message);
+            this.isConnected = false;
+            this.scheduleReconnect();
+        });
+        
+        this.client.on('reconnect', () => {
+            logger.info('🔄 MongoDB reconnected');
+            this.isConnected = true;
+            this.reconnectAttempts = 0;
+        });
+    }
+    
+    async handleConnectionError(error) {
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            logger.error('🔴 Max reconnection attempts reached. Switching to fallback mode.');
+            this.useFallback = true;
+            this.isConnected = true;
+            this.fallbackData = {
+                users: new Map(),
+                economy: new Map(),
+                groups: new Map(),
+                settings: new Map(),
+                attendance: new Map(),
+                stats: {
+                    commandsExecuted: 0,
+                    messagesReceived: 0,
+                    startTime: Date.now()
+                }
+            };
+            return;
+        }
+        
+        this.scheduleReconnect();
+    }
+    
+    scheduleReconnect() {
+        if (this.reconnectAttempts >= this.maxReconnectAttempts || this.useFallback) return;
+        
+        this.reconnectAttempts++;
+        const delay = this.reconnectInterval * this.reconnectAttempts;
+        
+        logger.info(`🔄 Scheduling reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+        
+        setTimeout(async () => {
+            try {
+                await this.init();
+            } catch (error) {
+                logger.error('🔄 Reconnection attempt failed:', error.message);
+            }
+        }, delay);
+    }
+    
     async createIndexes() {
+        if (this.useFallback) return;
+        
         try {
             // Create indexes for better query performance
-            await this.db.collection('users').createIndex({ userId: 1 }, { unique: true });
-            await this.db.collection('economy').createIndex({ userId: 1 }, { unique: true });
-            await this.db.collection('attendance').createIndex({ userId: 1 });
-            await this.db.collection('groups').createIndex({ groupId: 1 }, { unique: true });
+            await Promise.allSettled([
+                this.db.collection('users').createIndex({ userId: 1 }, { unique: true }),
+                this.db.collection('economy').createIndex({ userId: 1 }, { unique: true }),
+                this.db.collection('attendance').createIndex({ userId: 1 }),
+                this.db.collection('attendance').createIndex({ userId: 1, date: 1 }),
+                this.db.collection('groups').createIndex({ groupId: 1 }, { unique: true }),
+                this.db.collection('settings').createIndex({ key: 1 }, { unique: true })
+            ]);
             
             logger.debug('📚 Database indexes created');
         } catch (error) {
-            logger.warn('Could not create indexes:', error.message);
+            logger.warn('⚠️ Could not create some indexes:', error.message);
         }
     }
     
     async ensureConnection() {
+        if (this.useFallback) return true;
+        
         if (!this.isConnected) {
             await this.init();
         }
+        
+        // Test connection with ping
+        try {
+            if (this.db) {
+                await this.db.admin().ping();
+                return true;
+            }
+        } catch (error) {
+            logger.warn('📡 Connection test failed:', error.message);
+            this.isConnected = false;
+            return false;
+        }
+        
         return this.isConnected;
+    }
+    
+    // Cache management
+    getCacheKey(collection, id) {
+        return `${collection}:${id}`;
+    }
+    
+    setCache(collection, id, data) {
+        const key = this.getCacheKey(collection, id);
+        this.cache.set(key, {
+            data,
+            timestamp: Date.now()
+        });
+        
+        // Clean old cache entries
+        setTimeout(() => {
+            this.cache.delete(key);
+        }, this.cacheTimeout);
+    }
+    
+    getCache(collection, id) {
+        const key = this.getCacheKey(collection, id);
+        const cached = this.cache.get(key);
+        
+        if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+            return cached.data;
+        }
+        
+        this.cache.delete(key);
+        return null;
+    }
+    
+    // Fallback methods
+    async fallbackGet(collection, query) {
+        const data = this.fallbackData[collection];
+        if (data instanceof Map) {
+            const key = query.userId || query.groupId || query.key;
+            return data.get(key) || null;
+        }
+        return null;
+    }
+    
+    async fallbackSave(collection, query, document) {
+        const data = this.fallbackData[collection];
+        if (data instanceof Map) {
+            const key = query.userId || query.groupId || query.key || document.userId || document.groupId || document.key;
+            data.set(key, document);
+        }
+        return document;
+    }
+    
+    async fallbackGetAll(collection) {
+        const data = this.fallbackData[collection];
+        if (data instanceof Map) {
+            return Array.from(data.values());
+        }
+        return [];
     }
     
     // User management
     async getUser(userId) {
-        await this.ensureConnection();
         try {
-            return await this.db.collection('users').findOne({ userId });
+            // Try cache first
+            const cached = this.getCache('users', userId);
+            if (cached) return cached;
+            
+            if (this.useFallback) {
+                return await this.fallbackGet('users', { userId });
+            }
+            
+            await this.ensureConnection();
+            const user = await this.db.collection('users').findOne({ userId });
+            
+            if (user) {
+                this.setCache('users', userId, user);
+            }
+            
+            return user;
         } catch (error) {
-            logger.error('Error getting user:', error);
-            return null;
+            logger.error('Error getting user:', error.message);
+            return await this.fallbackGet('users', { userId });
         }
     }
     
     async saveUser(userId, userData) {
-        await this.ensureConnection();
         try {
             const updatedUser = {
                 ...userData,
@@ -86,42 +277,71 @@ class ExternalDatabase {
                 updatedAt: Date.now()
             };
             
-            const result = await this.db.collection('users').replaceOne(
+            if (this.useFallback) {
+                return await this.fallbackSave('users', { userId }, updatedUser);
+            }
+            
+            await this.ensureConnection();
+            await this.db.collection('users').replaceOne(
                 { userId },
                 updatedUser,
                 { upsert: true }
             );
             
+            // Update cache
+            this.setCache('users', userId, updatedUser);
+            
             return updatedUser;
         } catch (error) {
-            logger.error('Error saving user:', error);
-            throw error;
+            logger.error('Error saving user:', error.message);
+            return await this.fallbackSave('users', { userId }, {
+                ...userData,
+                userId,
+                lastSeen: Date.now(),
+                updatedAt: Date.now()
+            });
         }
     }
     
     async getAllUsers() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                return await this.fallbackGetAll('users');
+            }
+            
+            await this.ensureConnection();
             return await this.db.collection('users').find({}).toArray();
         } catch (error) {
-            logger.error('Error getting all users:', error);
-            return [];
+            logger.error('Error getting all users:', error.message);
+            return await this.fallbackGetAll('users');
         }
     }
     
     // Economy management
     async getEconomy(userId) {
-        await this.ensureConnection();
         try {
-            return await this.db.collection('economy').findOne({ userId });
+            const cached = this.getCache('economy', userId);
+            if (cached) return cached;
+            
+            if (this.useFallback) {
+                return await this.fallbackGet('economy', { userId });
+            }
+            
+            await this.ensureConnection();
+            const economy = await this.db.collection('economy').findOne({ userId });
+            
+            if (economy) {
+                this.setCache('economy', userId, economy);
+            }
+            
+            return economy;
         } catch (error) {
-            logger.error('Error getting economy data:', error);
-            return null;
+            logger.error('Error getting economy data:', error.message);
+            return await this.fallbackGet('economy', { userId });
         }
     }
     
     async saveEconomy(userId, economyData) {
-        await this.ensureConnection();
         try {
             const updated = {
                 ...economyData,
@@ -129,42 +349,55 @@ class ExternalDatabase {
                 lastUpdated: Date.now()
             };
             
+            if (this.useFallback) {
+                return await this.fallbackSave('economy', { userId }, updated);
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('economy').replaceOne(
                 { userId },
                 updated,
                 { upsert: true }
             );
             
+            this.setCache('economy', userId, updated);
             return updated;
         } catch (error) {
-            logger.error('Error saving economy data:', error);
-            throw error;
+            logger.error('Error saving economy data:', error.message);
+            return await this.fallbackSave('economy', { userId }, updated);
         }
     }
     
     async getAllEconomyProfiles() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                return await this.fallbackGetAll('economy');
+            }
+            
+            await this.ensureConnection();
             return await this.db.collection('economy').find({}).toArray();
         } catch (error) {
-            logger.error('Error getting economy profiles:', error);
-            return [];
+            logger.error('Error getting economy profiles:', error.message);
+            return await this.fallbackGetAll('economy');
         }
     }
     
     // Attendance management
     async getAttendance(userId) {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                return await this.fallbackGet('attendance', { userId });
+            }
+            
+            await this.ensureConnection();
             return await this.db.collection('attendance').findOne({ userId });
         } catch (error) {
-            logger.error('Error getting attendance:', error);
-            return null;
+            logger.error('Error getting attendance:', error.message);
+            return await this.fallbackGet('attendance', { userId });
         }
     }
     
     async saveAttendance(userId, attendanceData) {
-        await this.ensureConnection();
         try {
             const updated = {
                 ...attendanceData,
@@ -172,6 +405,11 @@ class ExternalDatabase {
                 lastUpdated: Date.now()
             };
             
+            if (this.useFallback) {
+                return await this.fallbackSave('attendance', { userId }, updated);
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('attendance').replaceOne(
                 { userId },
                 updated,
@@ -180,24 +418,27 @@ class ExternalDatabase {
             
             return updated;
         } catch (error) {
-            logger.error('Error saving attendance:', error);
-            throw error;
+            logger.error('Error saving attendance:', error.message);
+            return await this.fallbackSave('attendance', { userId }, updated);
         }
     }
     
     // Group management
     async getGroup(groupId) {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                return await this.fallbackGet('groups', { groupId });
+            }
+            
+            await this.ensureConnection();
             return await this.db.collection('groups').findOne({ groupId });
         } catch (error) {
-            logger.error('Error getting group:', error);
-            return null;
+            logger.error('Error getting group:', error.message);
+            return await this.fallbackGet('groups', { groupId });
         }
     }
     
     async saveGroup(groupId, groupData) {
-        await this.ensureConnection();
         try {
             const updated = {
                 ...groupData,
@@ -206,6 +447,11 @@ class ExternalDatabase {
                 updatedAt: Date.now()
             };
             
+            if (this.useFallback) {
+                return await this.fallbackSave('groups', { groupId }, updated);
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('groups').replaceOne(
                 { groupId },
                 updated,
@@ -214,41 +460,78 @@ class ExternalDatabase {
             
             return updated;
         } catch (error) {
-            logger.error('Error saving group:', error);
-            throw error;
+            logger.error('Error saving group:', error.message);
+            return await this.fallbackSave('groups', { groupId }, updated);
+        }
+    }
+    
+    async getAllGroups() {
+        try {
+            if (this.useFallback) {
+                return await this.fallbackGetAll('groups');
+            }
+            
+            await this.ensureConnection();
+            return await this.db.collection('groups').find({}).toArray();
+        } catch (error) {
+            logger.error('Error getting all groups:', error.message);
+            return await this.fallbackGetAll('groups');
         }
     }
     
     // Settings management
     async getSetting(key) {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                const setting = await this.fallbackGet('settings', { key });
+                return setting?.value || null;
+            }
+            
+            await this.ensureConnection();
             const result = await this.db.collection('settings').findOne({ key });
             return result?.value || null;
         } catch (error) {
-            logger.error('Error getting setting:', error);
-            return null;
+            logger.error('Error getting setting:', error.message);
+            const setting = await this.fallbackGet('settings', { key });
+            return setting?.value || null;
         }
     }
     
     async setSetting(key, value) {
-        await this.ensureConnection();
         try {
+            const setting = { key, value, updatedAt: Date.now() };
+            
+            if (this.useFallback) {
+                return await this.fallbackSave('settings', { key }, setting);
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('settings').replaceOne(
                 { key },
-                { key, value, updatedAt: Date.now() },
+                setting,
                 { upsert: true }
             );
+            
             return value;
         } catch (error) {
-            logger.error('Error setting value:', error);
-            throw error;
+            logger.error('Error setting value:', error.message);
+            await this.fallbackSave('settings', { key }, { key, value, updatedAt: Date.now() });
+            return value;
         }
     }
     
     async getAllSettings() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                const settings = await this.fallbackGetAll('settings');
+                const result = {};
+                settings.forEach(setting => {
+                    result[setting.key] = setting.value;
+                });
+                return result;
+            }
+            
+            await this.ensureConnection();
             const settings = await this.db.collection('settings').find({}).toArray();
             const result = {};
             settings.forEach(setting => {
@@ -256,15 +539,31 @@ class ExternalDatabase {
             });
             return result;
         } catch (error) {
-            logger.error('Error getting all settings:', error);
+            logger.error('Error getting all settings:', error.message);
             return {};
         }
     }
     
     // Statistics
     async getStats() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                const [userCount, economyCount, groupCount] = [
+                    this.fallbackData.users.size,
+                    this.fallbackData.economy.size,
+                    this.fallbackData.groups.size
+                ];
+                
+                return {
+                    ...this.fallbackData.stats,
+                    totalUsers: userCount,
+                    totalEconomyProfiles: economyCount,
+                    totalGroups: groupCount,
+                    uptime: Date.now() - this.fallbackData.stats.startTime
+                };
+            }
+            
+            await this.ensureConnection();
             const [userCount, economyCount, groupCount] = await Promise.all([
                 this.db.collection('users').countDocuments(),
                 this.db.collection('economy').countDocuments(),
@@ -286,7 +585,7 @@ class ExternalDatabase {
                 uptime: Date.now() - stats.startTime
             };
         } catch (error) {
-            logger.error('Error getting stats:', error);
+            logger.error('Error getting stats:', error.message);
             return {
                 totalUsers: 0,
                 totalEconomyProfiles: 0,
@@ -299,8 +598,14 @@ class ExternalDatabase {
     }
     
     async incrementCommandCount() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                this.fallbackData.stats.commandsExecuted++;
+                this.fallbackData.stats.lastCommandAt = Date.now();
+                return;
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('stats').updateOne(
                 { _id: 'global' },
                 { 
@@ -310,13 +615,23 @@ class ExternalDatabase {
                 { upsert: true }
             );
         } catch (error) {
-            logger.error('Error incrementing command count:', error);
+            logger.error('Error incrementing command count:', error.message);
+            // Fallback increment
+            if (this.fallbackData?.stats) {
+                this.fallbackData.stats.commandsExecuted++;
+            }
         }
     }
     
     async incrementMessageCount() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                this.fallbackData.stats.messagesReceived++;
+                this.fallbackData.stats.lastMessageAt = Date.now();
+                return;
+            }
+            
+            await this.ensureConnection();
             await this.db.collection('stats').updateOne(
                 { _id: 'global' },
                 { 
@@ -326,14 +641,53 @@ class ExternalDatabase {
                 { upsert: true }
             );
         } catch (error) {
-            logger.error('Error incrementing message count:', error);
+            logger.error('Error incrementing message count:', error.message);
+            // Fallback increment
+            if (this.fallbackData?.stats) {
+                this.fallbackData.stats.messagesReceived++;
+            }
         }
     }
     
     // Data export/import for migration
     async exportData() {
-        await this.ensureConnection();
         try {
+            if (this.useFallback) {
+                const users = {};
+                const economy = {};
+                const groups = {};
+                const attendance = {};
+                const settings = {};
+                
+                this.fallbackData.users.forEach((value, key) => {
+                    users[key] = value;
+                });
+                this.fallbackData.economy.forEach((value, key) => {
+                    economy[key] = value;
+                });
+                this.fallbackData.groups.forEach((value, key) => {
+                    groups[key] = value;
+                });
+                this.fallbackData.attendance.forEach((value, key) => {
+                    attendance[key] = value;
+                });
+                this.fallbackData.settings.forEach((value, key) => {
+                    settings[key] = value.value;
+                });
+                
+                return {
+                    users,
+                    economy,
+                    groups,
+                    attendance,
+                    settings,
+                    stats: this.fallbackData.stats,
+                    exportedAt: Date.now(),
+                    version: '2.0.0'
+                };
+            }
+            
+            await this.ensureConnection();
             const [users, economy, groups, settings, attendance] = await Promise.all([
                 this.db.collection('users').find({}).toArray(),
                 this.db.collection('economy').find({}).toArray(),
@@ -370,14 +724,63 @@ class ExternalDatabase {
                 version: '2.0.0'
             };
         } catch (error) {
-            logger.error('Error exporting data:', error);
+            logger.error('Error exporting data:', error.message);
             throw error;
         }
     }
     
     async importData(importData) {
-        await this.ensureConnection();
         try {
+            logger.info('📥 Starting data import...');
+            
+            if (this.useFallback) {
+                // Clear existing data
+                this.fallbackData.users.clear();
+                this.fallbackData.economy.clear();
+                this.fallbackData.groups.clear();
+                this.fallbackData.settings.clear();
+                this.fallbackData.attendance.clear();
+                
+                // Import new data
+                if (importData.users) {
+                    Object.entries(importData.users).forEach(([userId, userData]) => {
+                        this.fallbackData.users.set(userId, userData);
+                    });
+                }
+                
+                if (importData.economy) {
+                    Object.entries(importData.economy).forEach(([userId, economyData]) => {
+                        this.fallbackData.economy.set(userId, economyData);
+                    });
+                }
+                
+                if (importData.groups) {
+                    Object.entries(importData.groups).forEach(([groupId, groupData]) => {
+                        this.fallbackData.groups.set(groupId, groupData);
+                    });
+                }
+                
+                if (importData.settings) {
+                    Object.entries(importData.settings).forEach(([key, value]) => {
+                        this.fallbackData.settings.set(key, { key, value, importedAt: Date.now() });
+                    });
+                }
+                
+                if (importData.attendance) {
+                    Object.entries(importData.attendance).forEach(([userId, attendanceData]) => {
+                        this.fallbackData.attendance.set(userId, attendanceData);
+                    });
+                }
+                
+                if (importData.stats) {
+                    this.fallbackData.stats = { ...importData.stats, importedAt: Date.now() };
+                }
+                
+                logger.info('✅ Data imported successfully (fallback mode)');
+                return true;
+            }
+            
+            await this.ensureConnection();
             const session = this.client.startSession();
             
             await session.withTransaction(async () => {
@@ -442,20 +845,48 @@ class ExternalDatabase {
             });
             
             await session.endSession();
-            logger.info('✅ Data imported successfully to external database');
+            
+            // Clear cache after import
+            this.cache.clear();
+            
+            logger.info('✅ Data imported successfully to MongoDB');
             return true;
             
         } catch (error) {
-            logger.error('❌ Error importing data:', error);
+            logger.error('❌ Error importing data:', error.message);
             return false;
         }
     }
     
     async shutdown() {
-        if (this.client) {
-            await this.client.close();
-            this.isConnected = false;
-            logger.info('🔄 External database connection closed');
+        try {
+            this.cache.clear();
+            
+            if (this.client) {
+                await this.client.close();
+                this.isConnected = false;
+                logger.info('🔄 Database connection closed');
+            }
+        } catch (error) {
+            logger.error('Error during shutdown:', error.message);
+        }
+    }
+    
+    // Health check
+    async healthCheck() {
+        try {
+            if (this.useFallback) {
+                return { status: 'fallback', message: 'Using in-memory storage' };
+            }
+            
+            if (!this.isConnected) {
+                return { status: 'disconnected', message: 'Not connected to database' };
+            }
+            
+            await this.db.admin().ping();
+            return { status: 'connected', message: 'Database connection is healthy' };
+        } catch (error) {
+            return { status: 'error', message: error.message };
         }
     }
 }
@@ -465,6 +896,15 @@ export const database = new ExternalDatabase();
 
 // Helper functions for easy access
 export const db = {
+    // Connection status
+    get isConnected() {
+        return database.isConnected;
+    },
+    
+    get useFallback() {
+        return database.useFallback;
+    },
+    
     // User functions
     getUser: (userId) => database.getUser(userId),
     saveUser: (userId, userData) => database.saveUser(userId, userData),
@@ -498,6 +938,22 @@ export const db = {
     exportData: () => database.exportData(),
     importData: (data) => database.importData(data),
     
-    // Connection management
-    shutdown: () => database.shutdown()
+    // Health and connection management
+    healthCheck: () => database.healthCheck(),
+    shutdown: () => database.shutdown(),
+    
+    // Additional utility methods
+    ensureConnection: () => database.ensureConnection()
 };
+
+// Graceful shutdown handler
+process.on('SIGTERM', async () => {
+    logger.info('🔄 Received SIGTERM, closing database connections...');
+    await database.shutdown();
+});
+
+process.on('SIGINT', async () => {
+    logger.info('🔄 Received SIGINT, closing database connections...');
+    await database.shutdown();
+    process.exit(0);
+});
