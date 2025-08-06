@@ -1,15 +1,15 @@
 {
   "name": "groq-whatsapp-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp bot with Groq AI and Mega.nz session support",
+  "version": "2.0.0",
+  "description": "WhatsApp bot with Groq AI and enhanced session management",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "clean": "rm -rf sessions/* && rm -rf node_modules/.cache",
-    "session:validate": "node scripts/validateSession.js",
-    "session:backup": "node scripts/backupSession.js"
+    "test:session": "node scripts/testSession.js",
+    "clean": "rm -rf sessions/cache && rm -rf node_modules/.cache",
+    "validate": "node scripts/validateConfig.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",
@@ -18,7 +18,6 @@
     "express": "^4.19.2",
     "groq-sdk": "^0.7.0",
     "megajs": "^1.2.1",
-    "jszip": "^3.10.1",
     "moment-timezone": "^0.5.45",
     "mongoose": "^8.6.1",
     "node-cache": "^5.1.2",
@@ -33,7 +32,7 @@
     "nodemon": "^3.1.4"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.0.0"
   },
   "keywords": [
     "whatsapp",
@@ -43,6 +42,6 @@
     "mega",
     "session"
   ],
-  "author": "Alex Macksyn",
+  "author": "macksyn",
   "license": "MIT"
 }
