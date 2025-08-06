@@ -2,13 +2,17 @@ export const config = {
     // Bot Configuration
     BOT_NAME: process.env.BOT_NAME || 'Groq 🤖',
     PREFIX: process.env.PREFIX || '!',
-    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
     TIMEZONE: process.env.TIMEZONE || 'Africa/Lagos',
     
-    // Authentication Method
+    // Authentication Method - SEPARATE from admin/owner
     USE_PAIRING_CODE: process.env.USE_PAIRING_CODE === 'true',
+    PAIRING_NUMBER: process.env.PAIRING_NUMBER || process.env.OWNER_NUMBER || '2348089782988', // Separate pairing number
     SEND_STARTUP_MESSAGE: process.env.SEND_STARTUP_MESSAGE !== 'false', // Default true
     AUTO_RESTART_ON_LOGOUT: process.env.AUTO_RESTART_ON_LOGOUT === 'true',
+    
+    // Admin/Owner Configuration - SEPARATE from pairing
+    OWNER_NUMBER: process.env.OWNER_NUMBER || '2348166353338',
+    ADMIN_NUMBERS: process.env.ADMIN_NUMBERS ? process.env.ADMIN_NUMBERS.split(',') : ['2348166353338', '2348089782988'],
     
     // Webhook for notifications (optional)
     WEBHOOK_URL: process.env.WEBHOOK_URL || '',
@@ -19,6 +23,7 @@ export const config = {
     
     // Database
     DATABASE_URL: process.env.DATABASE_URL || 'sqlite:./database.db',
+    MONGODB_URI: process.env.MONGODB_URI || '',
     
     // Environment
     NODE_ENV: process.env.NODE_ENV || 'development',
@@ -29,7 +34,6 @@ export const config = {
     
     // Security
     MAX_COMMANDS_PER_MINUTE: parseInt(process.env.MAX_COMMANDS_PER_MINUTE) || 10,
-    ADMIN_NUMBERS: process.env.ADMIN_NUMBERS ? process.env.ADMIN_NUMBERS.split(',') : ['2348166353338', '2348089782984'],
     
     // Features Toggle
     ENABLE_WEATHER: process.env.ENABLE_WEATHER === 'true',
@@ -44,6 +48,9 @@ export const config = {
     // Logging
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     LOG_TO_FILE: process.env.LOG_TO_FILE === 'true',
+    
+    // Session persistence
+    PERSIST_SESSIONS: process.env.PERSIST_SESSIONS !== 'false', // Default true
     
     // Normalize phone numbers helper
     normalizePhoneNumber(number) {
@@ -74,18 +81,18 @@ export const config = {
         if (!this.PREFIX) required.push('PREFIX');
         
         // Pairing code validation
-        if (this.USE_PAIRING_CODE && !this.OWNER_NUMBER) {
-            required.push('OWNER_NUMBER (required when USE_PAIRING_CODE=true)');
+        if (this.USE_PAIRING_CODE && !this.PAIRING_NUMBER) {
+            required.push('PAIRING_NUMBER (required when USE_PAIRING_CODE=true)');
         }
         
-        if (this.USE_PAIRING_CODE && this.OWNER_NUMBER) {
+        if (this.USE_PAIRING_CODE && this.PAIRING_NUMBER) {
             // Validate phone number format
-            const cleanNumber = this.normalizePhoneNumber(this.OWNER_NUMBER);
+            const cleanNumber = this.normalizePhoneNumber(this.PAIRING_NUMBER);
             if (cleanNumber.length < 10 || cleanNumber.length > 15) {
-                required.push('OWNER_NUMBER (invalid format - should be 10-15 digits)');
+                required.push('PAIRING_NUMBER (invalid format - should be 10-15 digits)');
             } else {
-                // Update the owner number to normalized format
-                this.OWNER_NUMBER = cleanNumber;
+                // Update the pairing number to normalized format
+                this.PAIRING_NUMBER = cleanNumber;
             }
         }
         
@@ -96,6 +103,9 @@ export const config = {
             }
             if (!this.USE_PAIRING_CODE) {
                 warnings.push('USE_PAIRING_CODE=false - QR code scanning required (not ideal for cloud deployment)');
+            }
+            if (!this.MONGODB_URI) {
+                warnings.push('MONGODB_URI not set - sessions will not persist across deployments');
             }
         }
         
@@ -121,6 +131,12 @@ export const config = {
         if (this.OWNER_NUMBER) {
             this.OWNER_NUMBER = this.normalizePhoneNumber(this.OWNER_NUMBER);
             console.log('✅ Normalized owner number:', this.OWNER_NUMBER);
+        }
+        
+        // Normalize pairing number
+        if (this.PAIRING_NUMBER) {
+            this.PAIRING_NUMBER = this.normalizePhoneNumber(this.PAIRING_NUMBER);
+            console.log('✅ Normalized pairing number:', this.PAIRING_NUMBER);
         }
         
         return true;
