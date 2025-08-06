@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import './config';
 import http from 'http';
 import { createBot } from './client.js';
 import { logger } from './utils/logger.js';
