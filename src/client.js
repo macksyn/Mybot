@@ -452,6 +452,3 @@ export async function shutdown() {
 // Handle process signals
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-
-// Export for cleanup in main process
-export { shutdown };
