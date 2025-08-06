@@ -4,6 +4,7 @@ import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
 import { MessageHandler } from './handlers/messageHandler.js';
 import { EventHandler } from './handlers/eventHandler.js';
+import { sessionManager } from './utils/sessionManager.js';
 
 let isConnecting = false;
 let reconnectAttempts = 0;
@@ -18,6 +19,16 @@ export async function createBot() {
     isConnecting = true;
     
     try {
+        // Try to load existing session from MongoDB first
+        logger.info('🔍 Checking for existing session...');
+        const sessionLoaded = await sessionManager.loadSession();
+        
+        if (sessionLoaded) {
+            logger.info('✅ Existing session found and loaded from MongoDB');
+        } else {
+            logger.info('📭 No existing session found, will create new one');
+        }
+        
         const { state, saveCreds } = await useMultiFileAuthState('./sessions');
         const { version, isLatest } = await fetchLatestBaileysVersion();
         
@@ -53,16 +64,17 @@ export async function createBot() {
         const messageHandler = new MessageHandler(sock);
         const eventHandler = new EventHandler(sock);
         
-        // Handle pairing code generation - similar to working implementation
-        if (config.USE_PAIRING_CODE && config.OWNER_NUMBER && !sock.authState.creds.registered) {
+        // Handle pairing code generation - Use PAIRING_NUMBER instead of OWNER_NUMBER
+        if (config.USE_PAIRING_CODE && config.PAIRING_NUMBER && !sock.authState.creds.registered) {
             logger.info('🔗 Bot not registered, preparing pairing code...');
             
-            // Add delay before requesting pairing code (like the working implementation)
+            // Add delay before requesting pairing code
             await delay(1500);
             
             try {
-                const phoneNumber = config.OWNER_NUMBER.replace(/\D/g, '');
+                const phoneNumber = config.PAIRING_NUMBER.replace(/\D/g, '');
                 logger.info(`📱 Requesting pairing code for: ${phoneNumber}`);
+                logger.info(`📋 Note: This is for LOGIN only. Bot admin/owner is: ${config.OWNER_NUMBER}`);
                 
                 const code = await sock.requestPairingCode(phoneNumber);
                 logger.info(`📱 Your pairing code: ${code}`);
@@ -79,6 +91,21 @@ export async function createBot() {
             }
         }
         
+        // Enhanced credentials update with session persistence
+        sock.ev.on('creds.update', async () => {
+            await saveCreds();
+            
+            // Auto-save to MongoDB after credentials update
+            if (config.PERSIST_SESSIONS) {
+                try {
+                    await sessionManager.saveSession();
+                    logger.debug('📁 Session auto-saved to MongoDB');
+                } catch (error) {
+                    logger.debug('Session auto-save failed:', error.message);
+                }
+            }
+        });
+        
         // Connection events
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -91,7 +118,7 @@ export async function createBot() {
                 
                 if (config.NODE_ENV === 'production') {
                     logger.warn('⚠️  Running in production without pairing code setup!');
-                    logger.info('💡 Set USE_PAIRING_CODE=true and OWNER_NUMBER in environment variables for easier deployment');
+                    logger.info('💡 Set USE_PAIRING_CODE=true and PAIRING_NUMBER in environment variables for easier deployment');
                 }
             }
             
@@ -115,6 +142,13 @@ export async function createBot() {
                     process.exit(1);
                 } else {
                     logger.info('❌ Logged out. Please restart the bot to authenticate again.');
+                    
+                    // Clear session when logged out
+                    if (statusCode === DisconnectReason.loggedOut) {
+                        logger.info('🗑️ Clearing session due to logout...');
+                        await sessionManager.deleteSession();
+                    }
+                    
                     if (config.AUTO_RESTART_ON_LOGOUT) {
                         logger.info('🔄 Auto-restart enabled, restarting in 10 seconds...');
                         setTimeout(() => {
@@ -131,8 +165,24 @@ export async function createBot() {
                 logger.info('✅ Connected to WhatsApp successfully!');
                 logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
                 logger.info(`👤 Connected as: ${sock.user?.name || 'Unknown'} (${sock.user?.id || 'Unknown'})`);
+                logger.info(`📱 Pairing Number: ${config.PAIRING_NUMBER}`);
+                logger.info(`👑 Owner Number: ${config.OWNER_NUMBER}`);
+                logger.info(`👥 Admin Numbers: ${config.ADMIN_NUMBERS.join(', ')}`);
                 
-                // Send startup message to owner
+                // Save successful session to MongoDB
+                if (config.PERSIST_SESSIONS) {
+                    try {
+                        await sessionManager.saveSession();
+                        logger.info('💾 Session saved to MongoDB for persistence');
+                        
+                        // Start auto-save
+                        sessionManager.startAutoSave();
+                    } catch (error) {
+                        logger.warn('Could not save session to MongoDB:', error.message);
+                    }
+                }
+                
+                // Send startup message to owner (not pairing number)
                 if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
                     try {
                         // Add delay before sending startup message
@@ -145,7 +195,9 @@ export async function createBot() {
                                   `🔧 Prefix: ${config.PREFIX}\n` +
                                   `🌐 Environment: ${config.NODE_ENV}\n` +
                                   `⚡ Node.js: ${process.version}\n` +
-                                  `👤 Connected as: ${sock.user?.name || 'Bot'}\n\n` +
+                                  `👤 Connected as: ${sock.user?.name || 'Bot'}\n` +
+                                  `💾 Session Persistence: ${config.PERSIST_SESSIONS ? '✅ Enabled' : '❌ Disabled'}\n` +
+                                  `📱 Logged in via: ${config.PAIRING_NUMBER}\n\n` +
                                   `✅ All systems operational!\n` +
                                   `Type ${config.PREFIX}help to see available commands.`
                         });
@@ -158,9 +210,6 @@ export async function createBot() {
                 logger.info('🔄 Connecting to WhatsApp...');
             }
         });
-        
-        // Credentials update
-        sock.ev.on('creds.update', saveCreds);
         
         // Message events
         sock.ev.on('messages.upsert', async (messageUpdate) => {
