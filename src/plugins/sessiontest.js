@@ -1,114 +1,130 @@
-// Session test plugin for debugging and validation
+// src/plugins/sessiontest.js
 import { config } from '../config/config.js';
-import { validateSessionString, getSessionInfo } from '../utils/sessionManager.js';
+import { validateSessionString, getSessionInfo, testSession } from '../utils/sessionManager.js';
 
-const sessionTestPlugin = {
+export default {
     name: 'sessiontest',
-    description: 'Test and validate session string configuration',
-    usage: '!sessiontest',
+    description: 'Test and validate current session configuration',
+    usage: `${config.PREFIX}sessiontest`,
     category: 'debug',
-    adminOnly: true,
+    adminOnly: false,
     
     async execute(context) {
-        const { reply, senderId } = context;
-        const { isOwner, isAdmin } = await import('../utils/helpers.js');
-        
-        // Check permissions
-        if (!isOwner(senderId) && !isAdmin(senderId)) {
-            await reply('❌ This command requires admin permissions.');
-            return;
-        }
+        const { reply, react } = context;
         
         try {
-            let testResults = '🔍 *Session Configuration Test*\n\n';
+            await react('🔍');
             
-            // Test 1: Basic configuration
-            testResults += '📋 *Configuration Check:*\n';
-            testResults += `• BOT_NAME: ${config.BOT_NAME}\n`;
-            testResults += `• SESSION_ID: ${config.SESSION_ID}\n`;
-            testResults += `• Using Session String: ${config.isUsingSessionString() ? '✅ YES' : '❌ NO'}\n\n`;
+            const sessionString = config.SESSION_STRING;
             
-            // Test 2: Session string validation
-            if (config.isUsingSessionString()) {
-                testResults += '🔑 *Session String Analysis:*\n';
+            if (!sessionString || sessionString === 'your-session-string-here') {
+                await reply('❌ *Session Test Failed*\n\n' +
+                           '🔧 No valid session string found.\n\n' +
+                           '💡 *Setup Instructions:*\n' +
+                           '1. Get session from your generator\n' +
+                           '2. Set SESSION_STRING in .env file\n' +
+                           '3. Restart the bot\n\n' +
+                           'Current session string is placeholder or empty.');
+                return;
+            }
+            
+            // Basic validation
+            const validation = validateSessionString(sessionString);
+            
+            let response = '*🔍 Session Test Results*\n\n';
+            response += `*📝 Session Info:*\n`;
+            response += `• Session ID: \`${config.SESSION_ID}\`\n`;
+            response += `• String Length: ${sessionString.length} chars\n`;
+            response += `• Format: ${validation.valid ? '✅ Valid' : '❌ Invalid'}\n`;
+            
+            if (!validation.valid) {
+                response += `• Error: ${validation.error}\n\n`;
+                response += '🔧 *Fix Required:*\n';
+                response += '• Check your SESSION_STRING format\n';
+                response += '• Generate a new session if needed\n';
+                response += '• Ensure proper copying from generator';
                 
-                const sessionString = config.SESSION_STRING;
-                testResults += `• Length: ${sessionString.length} characters\n`;
-                testResults += `• Preview: ${sessionString.substring(0, 20)}...\n`;
+                await reply(response);
+                await react('❌');
+                return;
+            }
+            
+            // Get session info
+            const info = getSessionInfo(sessionString);
+            response += `• Type: ${info.type}\n`;
+            response += `• Phone: ${info.phoneNumber}\n`;
+            response += `• Has Creds: ${info.hasCredentials ? '✅' : '❌'}\n`;
+            response += `• Has Keys: ${info.hasKeys ? '✅' : '❌'}\n\n`;
+            
+            await reply(response);
+            
+            // Connectivity test for Mega sessions
+            if (validation.type === 'mega') {
+                await reply('🔗 *Testing Mega.nz Connection...*\n\nThis may take a few moments...');
                 
-                // Validate session string
-                const validation = validateSessionString(sessionString);
-                testResults += `• Validation: ${validation.valid ? '✅ VALID' : '❌ INVALID'}\n`;
-                
-                if (!validation.valid) {
-                    testResults += `• Error: ${validation.error}\n`;
-                } else {
-                    // Get session info
-                    try {
-                        const sessionInfo = getSessionInfo(sessionString);
-                        testResults += `• Has Credentials: ${sessionInfo.hasCredentials ? '✅' : '❌'}\n`;
-                        testResults += `• Has Keys: ${sessionInfo.hasKeys ? '✅' : '❌'}\n`;
-                        testResults += `• Registered: ${sessionInfo.registered ? '✅' : '❌'}\n`;
-                        testResults += `• Phone Number: ${sessionInfo.phoneNumber}\n`;
-                    } catch (infoError) {
-                        testResults += `• Info Error: ${infoError.message}\n`;
+                try {
+                    const testResult = await testSession(sessionString);
+                    
+                    if (testResult.success) {
+                        let successMsg = '✅ *Mega.nz Test Successful!*\n\n';
+                        successMsg += `*📊 Connection Details:*\n`;
+                        successMsg += `• Download: ✅ Success\n`;
+                        successMsg += `• Credentials: ${testResult.hasCredentials ? '✅' : '❌'}\n`;
+                        successMsg += `• Phone: ${testResult.phoneNumber || 'Unknown'}\n\n`;
+                        successMsg += '🎉 Your session is working perfectly!\n';
+                        successMsg += '🚀 Bot should connect without issues.';
+                        
+                        await reply(successMsg);
+                        await react('✅');
+                    } else {
+                        let errorMsg = '❌ *Mega.nz Test Failed*\n\n';
+                        errorMsg += `*🐛 Error Details:*\n`;
+                        errorMsg += `${testResult.error}\n\n`;
+                        
+                        // Provide specific help based on error type
+                        if (testResult.error.includes('network') || testResult.error.includes('ENOTFOUND')) {
+                            errorMsg += '🌐 *Network Issue:*\n';
+                            errorMsg += '• Check internet connection\n';
+                            errorMsg += '• Try again in a moment\n';
+                            errorMsg += '• Verify Mega.nz accessibility';
+                        } else if (testResult.error.includes('not found') || testResult.error.includes('404')) {
+                            errorMsg += '📁 *File Issue:*\n';
+                            errorMsg += '• Session file may be deleted\n';
+                            errorMsg += '• Generate new session\n';
+                            errorMsg += '• Check file ID and key';
+                        } else if (testResult.error.includes('JSON') || testResult.error.includes('credentials')) {
+                            errorMsg += '📋 *Format Issue:*\n';
+                            errorMsg += '• Invalid session data format\n';
+                            errorMsg += '• Generate new session\n';
+                            errorMsg += '• Check session generator';
+                        } else {
+                            errorMsg += '🔧 *General Issue:*\n';
+                            errorMsg += '• Try generating new session\n';
+                            errorMsg += '• Contact session generator support\n';
+                            errorMsg += '• Check session format';
+                        }
+                        
+                        await reply(errorMsg);
+                        await react('❌');
                     }
+                } catch (testError) {
+                    await reply(`❌ *Test Error*\n\n${testError.message}\n\n🔧 Try generating a new session.`);
+                    await react('❌');
                 }
-                testResults += '\n';
             } else {
-                testResults += '📁 *File-Based Session:*\n';
-                testResults += '• Method: Traditional file-based authentication\n';
-                testResults += `• Session Path: ${config.getSessionPath()}\n\n`;
+                // For direct sessions, just confirm parsing works
+                let directMsg = '📝 *Direct Session Test*\n\n';
+                directMsg += '✅ Session parsing successful\n';
+                directMsg += '🔧 Format is compatible\n\n';
+                directMsg += '🎉 Your session should work correctly!';
+                
+                await reply(directMsg);
+                await react('✅');
             }
-            
-            // Test 3: Environment recommendations
-            testResults += '💡 *Recommendations:*\n';
-            
-            if (!config.isUsingSessionString()) {
-                testResults += '• Consider using SESSION_STRING for easier deployment\n';
-                testResults += '• Session strings are more portable than files\n';
-            } else {
-                testResults += '• ✅ Using recommended session string method\n';
-            }
-            
-            if (config.SESSION_STRING === 'your-session-string-here') {
-                testResults += '• ⚠️ Replace placeholder SESSION_STRING with actual value\n';
-            }
-            
-            if (config.NODE_ENV === 'production' && !config.OWNER_NUMBER) {
-                testResults += '• ⚠️ Set OWNER_NUMBER for production deployment\n';
-            }
-            
-            testResults += '\n';
-            
-            // Test 4: Quick setup guide
-            if (config.SESSION_STRING === 'your-session-string-here') {
-                testResults += '🔧 *Quick Setup:*\n';
-                testResults += '1. Use your session generator\n';
-                testResults += '2. Get session string (like "malvin~ABC...")\n';
-                testResults += '3. Set SESSION_STRING in .env file\n';
-                testResults += '4. Restart the bot\n\n';
-            } else {
-                testResults += '✅ *Setup Complete:*\n';
-                testResults += 'Session configuration looks good!\n';
-                testResults += 'Bot should connect automatically.\n\n';
-            }
-            
-            // Test 5: Connection status
-            testResults += '🌐 *Connection Status:*\n';
-            testResults += `• Bot Status: ${context.sock.user ? '🟢 Connected' : '🟡 Connecting'}\n`;
-            if (context.sock.user) {
-                testResults += `• Bot Number: ${context.sock.user.id.split(':')[0]}\n`;
-                testResults += `• Connection Type: ${context.sock.type || 'Unknown'}\n`;
-            }
-            
-            await reply(testResults);
             
         } catch (error) {
-            console.error('Session test error:', error);
-            await reply(`❌ Session test failed: ${error.message}`);
+            await reply(`❌ *Session Test Error*\n\n${error.message}\n\n🔧 Please check your session configuration.`);
+            await react('❌');
         }
     }
 };
-
-export default sessionTestPlugin;
