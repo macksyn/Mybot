@@ -12,6 +12,8 @@ import quotePlugin from '../plugins/quote.js';
 import calculatorPlugin from '../plugins/calculator.js';
 import adminPlugin from '../plugins/admin.js';
 import pairPlugin from '../plugins/pair.js';
+import debugPlugin from '../plugins/debug.js';
+import migratePlugin from '../plugins/migrate.js';
 
 // Import new plugins
 import economyPlugin from '../plugins/economy.js';
@@ -34,6 +36,7 @@ export class MessageHandler {
         this.plugins.set('info', infoPlugin);
         // Add this line for debugging:
         this.plugins.set('debug', debugPlugin);
+        this.plugins.set('migrate', migratePlugin);
         
         // Economy system plugins
         this.plugins.set('economy', economyPlugin);
