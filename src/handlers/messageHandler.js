@@ -99,7 +99,7 @@ export class MessageHandler {
         this.plugins.set('debug', debugPlugin);
         this.plugins.set('migrate', migratePlugin);
         this.plugins.set('testperms', testPermsPlugin);
-        this.plugins.set('sessiontest', sessiontestPlugin);
+        this.plugins.set('sessiontest', sessiontestPlugin); // FIXED: was this.sessiontest.set
         
         // Economy system plugins
         this.plugins.set('economy', economyPlugin);
