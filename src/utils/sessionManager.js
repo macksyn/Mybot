@@ -53,7 +53,10 @@ async function handleMegaSession(sessionString) {
             throw new Error('Invalid Mega format. Expected: fileId#decryptionKey');
         }
 
-        logger.info(`📥 Downloading session from Mega.nz (File ID: ${fileId})`);
+        logger.info(`📥 Processing Mega.nz session:`);
+        logger.info(`   Prefix: ${prefix}`);
+        logger.info(`   File ID: ${fileId}`);
+        logger.info(`   Key length: ${decryptionKey.length} characters`);
 
         // Check cache first
         const cached = await loadCachedSession(prefix);
@@ -69,13 +72,16 @@ async function handleMegaSession(sessionString) {
 
         // Construct Mega.nz URL
         const megaUrl = `https://mega.nz/file/${fileId}#${decryptionKey}`;
+        logger.info(`🔗 Mega URL: ${megaUrl}`);
         
         // Download from Mega
+        logger.info('⏳ Downloading WhatsApp session file from Mega.nz...');
         const sessionData = await downloadFromMega(megaUrl);
         
         // Cache the session locally for faster future access
         await cacheSession(sessionData, prefix);
         
+        logger.info('✅ Mega.nz session processed successfully');
         return {
             state: {
                 creds: sessionData.creds,
@@ -85,6 +91,20 @@ async function handleMegaSession(sessionString) {
 
     } catch (error) {
         logger.error('Failed to handle Mega session:', error.message);
+        
+        // Add specific guidance for Mega.nz issues
+        if (error.message.includes('File not found')) {
+            logger.error('💡 Troubleshooting tips:');
+            logger.error('   • Check if the Mega.nz file still exists');
+            logger.error('   • Verify the file ID and decryption key are correct');
+            logger.error('   • Generate a new session if the file was deleted');
+        } else if (error.message.includes('Network')) {
+            logger.error('💡 Network troubleshooting:');
+            logger.error('   • Check your internet connection');
+            logger.error('   • Verify your server can access mega.nz');
+            logger.error('   • Try again in a few minutes');
+        }
+        
         throw error;
     }
 }
@@ -159,6 +179,7 @@ async function handleDirectSession(sessionString) {
 async function downloadFromMega(megaUrl) {
     try {
         logger.info('⬇️ Connecting to Mega.nz...');
+        logger.info(`📡 URL: ${megaUrl}`);
         
         // Create file instance from URL
         const file = File.fromURL(megaUrl);
@@ -169,28 +190,63 @@ async function downloadFromMega(megaUrl) {
         
         logger.info(`✅ Downloaded ${buffer.length} bytes from Mega.nz`);
         
-        // Try to parse as JSON
+        // Convert buffer to string
         const jsonString = buffer.toString('utf-8');
-        const sessionData = JSON.parse(jsonString, BufferJSON.reviver);
+        logger.debug(`📄 File content preview: ${jsonString.substring(0, 100)}...`);
         
-        // Validate the downloaded session data
+        // Try to parse as JSON with BufferJSON.reviver for Baileys compatibility
+        let sessionData;
+        try {
+            sessionData = JSON.parse(jsonString, BufferJSON.reviver);
+        } catch (parseError) {
+            logger.error('❌ JSON parsing failed:', parseError.message);
+            logger.debug('Raw content:', jsonString.substring(0, 500));
+            throw new Error('Downloaded file is not valid JSON format');
+        }
+        
+        // Validate the downloaded session data structure
+        if (!sessionData || typeof sessionData !== 'object') {
+            throw new Error('Downloaded file does not contain valid session object');
+        }
+        
         if (!sessionData.creds) {
-            throw new Error('Downloaded file does not contain valid session credentials');
+            logger.error('❌ Session validation failed - missing creds');
+            logger.debug('Available keys:', Object.keys(sessionData));
+            throw new Error('Downloaded file does not contain valid session credentials (missing creds)');
+        }
+        
+        // Check for required creds fields
+        if (!sessionData.creds.noiseKey || !sessionData.creds.signedIdentityKey) {
+            logger.warn('⚠️ Session may be incomplete - missing some required fields');
+        }
+        
+        // Ensure keys object exists
+        if (!sessionData.keys) {
+            logger.info('📝 No keys found in session, initializing empty keys object');
+            sessionData.keys = {};
         }
         
         logger.info('✅ Session data validated successfully');
+        logger.info(`📊 Session info: ${Object.keys(sessionData.keys).length} keys, registered: ${!!sessionData.creds.registered}`);
+        
         return sessionData;
         
     } catch (error) {
         logger.error('❌ Mega.nz download failed:', error.message);
         
-        // Provide helpful error messages
-        if (error.message.includes('ENOTFOUND') || error.message.includes('network')) {
+        // Provide helpful error messages based on error type
+        if (error.message.includes('ENOTFOUND') || error.message.includes('network') || error.message.includes('getaddrinfo')) {
             throw new Error('Network error: Could not connect to Mega.nz. Check your internet connection.');
-        } else if (error.message.includes('404') || error.message.includes('not found')) {
-            throw new Error('File not found: The Mega.nz link may be expired or invalid.');
-        } else if (error.message.includes('JSON')) {
+        } else if (error.message.includes('404') || error.message.includes('not found') || error.message.includes('File not found')) {
+            throw new Error('File not found: The Mega.nz file may have been deleted or the link is invalid.');
+        } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+            throw new Error('Access denied: The Mega.nz file may be private or the key is incorrect.');
+        } else if (error.message.includes('JSON') || error.message.includes('parse')) {
             throw new Error('Invalid session file: The downloaded file is not valid JSON session data.');
+        } else if (error.message.includes('credentials') || error.message.includes('creds')) {
+            throw new Error('Invalid session structure: The file does not contain valid WhatsApp credentials.');
+        } else if (error.message.includes('timeout')) {
+            throw new Error('Download timeout: Mega.nz is taking too long to respond. Try again later.');
         }
         
         throw new Error(`Mega.nz download failed: ${error.message}`);
