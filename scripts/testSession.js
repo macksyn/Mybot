@@ -27,25 +27,48 @@ async function runSessionTest() {
         if (validation.prefix) {
             console.log(`   Prefix: ${validation.prefix}`);
         }
+        
+        // Show what was detected
+        if (validation.type === 'mega') {
+            const parts = sessionString.split('~');
+            if (parts.length === 2) {
+                const megaParts = parts[1].split('#');
+                console.log(`   File ID: ${megaParts[0]}`);
+                console.log(`   Key: ${megaParts[1].substring(0, 20)}...`);
+            }
+        }
     } else {
         console.log(`❌ Format: Invalid - ${validation.error}`);
+        
+        // Provide specific guidance
+        console.log('\n💡 Session String Format Guide:');
+        console.log('   • Mega.nz format: prefix~fileId#decryptionKey');
+        console.log('   • Example: Groq~abc123#xyz789def456...');
+        console.log('   • Direct format: prefix~base64data');
+        console.log('   • Raw JSON: {"creds":...}');
+        
         process.exit(1);
     }
     
     // Step 2: Extract session info
     console.log('\n🔸 Step 2: Session Information');
-    const info = getSessionInfo(sessionString);
-    console.log(`   Type: ${info.type}`);
-    console.log(`   Has Credentials: ${info.hasCredentials ? '✅' : '❌'}`);
-    console.log(`   Has Keys: ${info.hasKeys ? '✅' : '❌'}`);
-    console.log(`   Phone Number: ${info.phoneNumber}`);
-    console.log(`   Registered: ${info.registered}`);
+    try {
+        const info = await getSessionInfo(sessionString);
+        console.log(`   Type: ${info.type}`);
+        console.log(`   Has Credentials: ${info.hasCredentials ? '✅' : '❌'}`);
+        console.log(`   Has Keys: ${info.hasKeys ? '✅' : '❌'}`);
+        console.log(`   Phone Number: ${info.phoneNumber}`);
+        console.log(`   Registered: ${info.registered}`);
+    } catch (error) {
+        console.log(`   ❌ Error getting session info: ${error.message}`);
+    }
     
     // Step 3: Connectivity test
     console.log('\n🔸 Step 3: Connectivity Test');
     
     if (validation.type === 'mega') {
         console.log('🔗 Testing Mega.nz download...');
+        console.log('⏳ This may take a moment...');
     } else {
         console.log('📝 Testing direct session parsing...');
     }
@@ -78,6 +101,12 @@ async function runSessionTest() {
                 console.log('   • The downloaded file may not be valid session data');
                 console.log('   • Try generating a new session');
                 console.log('   • Check your session generator output format');
+            } else if (testResult.error.includes('Unexpected token')) {
+                console.log('\n💡 Parsing Tips:');
+                console.log('   • Session string format may be incorrect');
+                console.log('   • Verify you copied the complete session string');
+                console.log('   • Make sure it follows: prefix~fileId#key format');
+                console.log('   • Or for direct: prefix~base64data');
             }
             
             process.exit(1);
@@ -85,6 +114,25 @@ async function runSessionTest() {
     } catch (error) {
         console.log('❌ Unexpected error during testing:');
         console.log(`   ${error.message}`);
+        
+        // Debug information
+        console.log('\n🔧 Debug Information:');
+        console.log(`   Session string length: ${sessionString.length}`);
+        console.log(`   Contains ~: ${sessionString.includes('~')}`);
+        console.log(`   Contains #: ${sessionString.includes('#')}`);
+        
+        if (sessionString.includes('~')) {
+            const parts = sessionString.split('~');
+            console.log(`   Parts after split: ${parts.length}`);
+            if (parts.length === 2) {
+                console.log(`   Second part contains #: ${parts[1].includes('#')}`);
+                if (parts[1].includes('#')) {
+                    const subParts = parts[1].split('#');
+                    console.log(`   Mega parts: ${subParts.length}`);
+                }
+            }
+        }
+        
         process.exit(1);
     }
     
@@ -107,11 +155,20 @@ async function runSessionTest() {
         console.log('   • Cache expires after 1 hour for security');
         console.log('   • Keep your session generator link secure');
         console.log('   • If the bot fails to start, run this test again');
+        console.log('\n🔄 Next time you start the bot:');
+        console.log('   • First start may be slow (downloads from Mega)');
+        console.log('   • Subsequent starts will be faster (uses cache)');
     }
 }
 
 // Run the test
 runSessionTest().catch(error => {
     console.error('\n💥 Fatal error:', error.message);
+    console.error('\n🔧 Common Issues:');
+    console.error('   • Invalid session string format');
+    console.error('   • Network connection problems');
+    console.error('   • Expired or deleted Mega.nz file');
+    console.error('   • Corrupted session data');
+    console.error('\n💡 Try generating a fresh session string');
     process.exit(1);
 });
