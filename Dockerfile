@@ -4,20 +4,22 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies for Sharp and other native modules
 RUN apk add --no-cache \
     ffmpeg \
     imagemagick \
     git \
     python3 \
     make \
-    g++
+    g++ \
+    vips-dev \
+    libc6-compat
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Clean install with legacy peer deps to resolve conflicts
+RUN npm ci --only=production --legacy-peer-deps && npm cache clean --force
 
 # Copy application code
 COPY . .
