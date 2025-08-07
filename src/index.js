@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import './config';
+import 'dotenv/config';
 import http from 'http';
 import { createBot } from './client.js';
 import { logger } from './utils/logger.js';
@@ -30,7 +30,8 @@ const server = http.createServer((req, res) => {
             uptime: `${uptime}s`,
             timestamp: new Date().toISOString(),
             environment: config.NODE_ENV,
-            prefix: config.PREFIX
+            prefix: config.PREFIX,
+            sessionType: config.isUsingSessionString() ? 'Session String' : 'File-based'
         };
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -84,6 +85,14 @@ async function startBot() {
         logger.info(`Starting ${config.BOT_NAME}...`);
         logger.info(`Environment: ${config.NODE_ENV}`);
         logger.info(`Prefix: ${config.PREFIX}`);
+        logger.info(`Session Method: ${config.isUsingSessionString() ? 'Session String' : 'File-based'}`);
+        
+        if (config.isUsingSessionString()) {
+            const sessionInfo = config.getSessionInfo();
+            if (sessionInfo.type === 'mega') {
+                logger.info('🔗 Mega.nz session detected - will download on connection');
+            }
+        }
         
         botStatus = 'connecting';
         const bot = await createBot();
@@ -98,6 +107,17 @@ async function startBot() {
     } catch (error) {
         logger.error('Failed to start bot:', error);
         botStatus = 'error';
+        
+        // Provide helpful error guidance
+        if (error.message.includes('Session')) {
+            logger.error('');
+            logger.error('🔧 Session Issues - Try:');
+            logger.error('   1. Check your SESSION_STRING in .env');
+            logger.error('   2. Run: npm run test:session');
+            logger.error('   3. Verify Mega.nz file is accessible');
+            logger.error('   4. Generate a new session if needed');
+        }
+        
         process.exit(1);
     }
 }
