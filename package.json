@@ -25,7 +25,7 @@
     "@whiskeysockets/baileys": "^6.6.0",
     "axios": "^1.7.7",
     "chalk": "^5.3.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.3.1",
     "express": "^4.19.2",
     "groq-sdk": "^0.7.0",
     "megajs": "^1.2.1",
