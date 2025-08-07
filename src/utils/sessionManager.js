@@ -309,9 +309,9 @@ export function validateSessionString(sessionString) {
 }
 
 /**
- * Extract session info from session string
+ * Extract session info from session string - FIXED: Added async
  */
-export function getSessionInfo(sessionString) {
+export async function getSessionInfo(sessionString) {
     try {
         const validation = validateSessionString(sessionString);
         
