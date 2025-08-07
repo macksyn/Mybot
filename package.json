@@ -1,5 +1,5 @@
 {
-  "name": "Groq 🤖",
+  "name": "groq-whatsapp-bot",
   "version": "1.0.0",
   "description": "A modern WhatsApp bot built with Baileys",
   "main": "src/index.js",
@@ -8,8 +8,6 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "build": "echo 'No build step required'",
-    "lint": "eslint src/",
-    "test": "echo 'No tests specified'",
     "test:session": "node scripts/testSession.js"
   },
   "keywords": [
@@ -41,25 +39,10 @@
     "mongoose": "^8.0.0",
     "uuid": "^10.0.0"
   },
-  "devDependencies": {
-    "eslint": "^8.56.0",
-    "nodemon": "^3.0.2"
-  },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=18.0.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/whatsapp-bot.git"
-  },
-  "bugs": {
-    "url": "https://github.com/yourusername/whatsapp-bot/issues"
-  },
-  "homepage": "https://github.com/yourusername/whatsapp-bot#readme",
   "overrides": {
-    "sharp": "^0.32.6"
-  },
-  "resolutions": {
     "sharp": "^0.32.6"
   }
 }
