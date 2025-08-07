@@ -17,10 +17,14 @@ export async function sessionStringToAuth(sessionString) {
             throw new Error('Invalid session string');
         }
 
-        // Check if it's a Mega.nz identifier format - FIXED LOGIC
-        if (sessionString.includes('~') && sessionString.includes('#')) {
-            logger.info('🔗 Detected Mega.nz session format');
-            return await handleMegaSession(sessionString);
+        // Check if it's a Mega.nz identifier format - IMPROVED LOGIC
+        // Must have both ~ and #, and the part after ~ should contain #
+        if (sessionString.includes('~')) {
+            const parts = sessionString.split('~');
+            if (parts.length === 2 && parts[1].includes('#')) {
+                logger.info('🔗 Detected Mega.nz session format');
+                return await handleMegaSession(sessionString);
+            }
         }
 
         // Handle traditional session string formats
@@ -268,7 +272,7 @@ export function authToSessionString(authState, prefix = 'groq') {
 }
 
 /**
- * Validate session string format - FIXED LOGIC
+ * Validate session string format - IMPROVED LOGIC
  */
 export function validateSessionString(sessionString) {
     try {
@@ -284,22 +288,25 @@ export function validateSessionString(sessionString) {
             return { valid: false, error: 'Session string too short' };
         }
 
-        // FIXED: Check for Mega.nz format first (both ~ and # must be present)
-        if (sessionString.includes('~') && sessionString.includes('#')) {
+        // IMPROVED: Check for Mega.nz format - must have ~ and the part after ~ must contain #
+        if (sessionString.includes('~')) {
             const parts = sessionString.split('~');
-            if (parts.length === 2) {
+            if (parts.length === 2 && parts[1].includes('#')) {
+                // This is Mega.nz format: prefix~fileId#key
                 const [prefix, megaData] = parts;
                 const megaParts = megaData.split('#');
                 if (megaParts.length === 2 && megaParts[0] && megaParts[1]) {
                     return { valid: true, type: 'mega', prefix };
                 }
+                return { valid: false, error: 'Invalid Mega format. Expected: prefix~fileId#key' };
+            } else if (parts.length === 2) {
+                // Direct session string format: prefix~base64data
+                return { valid: true, type: 'direct' };
+            } else {
+                return { valid: false, error: 'Invalid session string format' };
             }
-            return { valid: false, error: 'Invalid Mega format. Expected: prefix~fileId#key' };
-        } else if (sessionString.includes('~')) {
-            // Direct session string format
-            return { valid: true, type: 'direct' };
         } else {
-            // Raw JSON format
+            // Raw JSON format (no prefix)
             return { valid: true, type: 'json' };
         }
 
