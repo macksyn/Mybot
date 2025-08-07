@@ -1,48 +1,65 @@
 {
-  "name": "groq-whatsapp-bot",
+  "name": "Groq 🤖",
   "version": "1.0.0",
-  "description": "WhatsApp bot with Groq AI and Mega.nz session support",
-  "type": "module",
+  "description": "A modern WhatsApp bot built with Baileys",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "clean": "rm -rf sessions/* && rm -rf node_modules/.cache",
-    "session:validate": "node scripts/validateSession.js",
-    "session:backup": "node scripts/backupSession.js"
-  },
-  "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.8",
-    "axios": "^1.7.7",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "groq-sdk": "^0.7.0",
-    "megajs": "^1.2.1",
-    "jszip": "^3.10.1",
-    "moment-timezone": "^0.5.45",
-    "mongoose": "^8.6.1",
-    "node-cache": "^5.1.2",
-    "node-cron": "^3.0.3",
-    "node-fetch": "^3.3.2",
-    "pino": "^9.3.2",
-    "qrcode-terminal": "^0.12.0",
-    "sharp": "^0.32.6",
-    "uuid": "^10.0.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
-  },
-  "engines": {
-    "node": ">=20.0.0"
+    "dev": "node --watch src/index.js",
+    "build": "echo 'No build step required'",
+    "lint": "eslint src/",
+    "test": "echo 'No tests specified'",
+    "test:session": "node scripts/testSession.js"
   },
   "keywords": [
     "whatsapp",
     "bot",
-    "groq",
-    "ai",
-    "mega",
-    "session"
+    "baileys",
+    "nodejs",
+    "automation"
   ],
-  "author": "Alex Macksyn",
-  "license": "MIT"
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.8",
+    "axios": "^1.7.7",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "groq-sdk": "^0.7.0",
+    "megajs": "^1.2.1",
+    "moment": "^2.29.4",
+    "moment-timezone": "^0.5.45",
+    "node-cache": "^5.1.2",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "qrcode-terminal": "^0.12.0",
+    "winston": "^3.11.0",
+    "sharp": "^0.32.6",
+    "mongodb": "^6.3.0",
+    "mongoose": "^8.0.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/whatsapp-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/whatsapp-bot/issues"
+  },
+  "homepage": "https://github.com/yourusername/whatsapp-bot#readme",
+  "overrides": {
+    "sharp": "^0.32.6"
+  },
+  "resolutions": {
+    "sharp": "^0.32.6"
+  }
 }
