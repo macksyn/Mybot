@@ -17,8 +17,8 @@ export async function sessionStringToAuth(sessionString) {
             throw new Error('Invalid session string');
         }
 
-        // Check if it's a Mega.nz identifier format
-        if (sessionString.includes('#') && sessionString.includes('~')) {
+        // Check if it's a Mega.nz identifier format - FIXED LOGIC
+        if (sessionString.includes('~') && sessionString.includes('#')) {
             logger.info('🔗 Detected Mega.nz session format');
             return await handleMegaSession(sessionString);
         }
@@ -50,6 +50,18 @@ async function handleMegaSession(sessionString) {
         }
 
         logger.info(`📥 Downloading session from Mega.nz (File ID: ${fileId})`);
+
+        // Check cache first
+        const cached = await loadCachedSession(prefix);
+        if (cached) {
+            logger.info('📦 Using cached Mega.nz session');
+            return {
+                state: {
+                    creds: cached.creds,
+                    keys: cached.keys || {}
+                }
+            };
+        }
 
         // Construct Mega.nz URL
         const megaUrl = `https://mega.nz/file/${fileId}#${decryptionKey}`;
@@ -256,7 +268,7 @@ export function authToSessionString(authState, prefix = 'groq') {
 }
 
 /**
- * Validate session string format
+ * Validate session string format - FIXED LOGIC
  */
 export function validateSessionString(sessionString) {
     try {
@@ -272,9 +284,8 @@ export function validateSessionString(sessionString) {
             return { valid: false, error: 'Session string too short' };
         }
 
-        // Check format
-        if (sessionString.includes('#') && sessionString.includes('~')) {
-            // Mega.nz format
+        // FIXED: Check for Mega.nz format first (both ~ and # must be present)
+        if (sessionString.includes('~') && sessionString.includes('#')) {
             const parts = sessionString.split('~');
             if (parts.length === 2) {
                 const [prefix, megaData] = parts;
@@ -327,15 +338,25 @@ export function getSessionInfo(sessionString) {
         }
 
         // For direct sessions, try to extract info
-        const authState = sessionStringToAuth(sessionString);
-        
-        return {
-            hasCredentials: !!authState.state.creds,
-            hasKeys: !!authState.state.keys && Object.keys(authState.state.keys).length > 0,
-            registered: !!authState.state.creds?.registered,
-            phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
-            type: validation.type
-        };
+        try {
+            const authState = await sessionStringToAuth(sessionString);
+            
+            return {
+                hasCredentials: !!authState.state.creds,
+                hasKeys: !!authState.state.keys && Object.keys(authState.state.keys).length > 0,
+                registered: !!authState.state.creds?.registered,
+                phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
+                type: validation.type
+            };
+        } catch (error) {
+            return {
+                hasCredentials: false,
+                hasKeys: false,
+                registered: false,
+                phoneNumber: 'Parse error',
+                type: validation.type
+            };
+        }
 
     } catch (error) {
         logger.debug('Could not extract session info:', error.message);
@@ -375,7 +396,7 @@ export async function testSession(sessionString) {
         logger.info('🧪 Testing session connectivity...');
         
         const validation = validateSessionString(sessionString);
-        logger.info(`📝 Session validation: ${validation.valid ? '✅ Valid' : '❌ Invalid'}`);
+        logger.info(`📝 Session validation: ${validation.valid ? '✅ Valid' : '❌ Invalid'} (Type: ${validation.type})`);
         
         if (!validation.valid) {
             return { success: false, error: validation.error };
