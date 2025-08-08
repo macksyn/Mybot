@@ -1,45 +1,80 @@
-import { BufferJSON } from '@whiskeysockets/baileys';
+import { BufferJSON, initAuthCreds } from '@whiskeysockets/baileys';
 import { logger } from './logger.js';
 import { File } from 'megajs';
 import fs from 'fs';
 import path from 'path';
 
 /**
- * Enhanced session manager with better flat format handling
+ * Create proper keys structure for Baileys
  */
+function createKeysStructure() {
+    const keys = new Map();
+    
+    // Add required methods for Baileys compatibility
+    keys.get = function(key) {
+        return Map.prototype.get.call(this, key);
+    };
+    
+    keys.set = function(key, value) {
+        return Map.prototype.set.call(this, key, value);
+    };
+    
+    keys.has = function(key) {
+        return Map.prototype.has.call(this, key);
+    };
+    
+    keys.delete = function(key) {
+        return Map.prototype.delete.call(this, key);
+    };
+    
+    keys.clear = function() {
+        return Map.prototype.clear.call(this);
+    };
+    
+    keys.forEach = function(callback) {
+        return Map.prototype.forEach.call(this, callback);
+    };
+    
+    keys.keys = function() {
+        return Map.prototype.keys.call(this);
+    };
+    
+    keys.values = function() {
+        return Map.prototype.values.call(this);
+    };
+    
+    keys.entries = function() {
+        return Map.prototype.entries.call(this);
+    };
+    
+    return keys;
+}
 
 /**
- * Download session data from Mega.nz with enhanced format detection
+ * Enhanced session manager with proper Baileys compatibility
  */
 async function downloadFromMega(megaUrl) {
     try {
         logger.info('⬇️ Connecting to Mega.nz...');
         logger.info(`📡 URL: ${megaUrl}`);
         
-        // Create file instance from URL
         const file = File.fromURL(megaUrl);
-        
-        // Download the file buffer
         logger.info('📦 Downloading session file...');
         const buffer = await file.downloadBuffer();
         
         logger.info(`✅ Downloaded ${buffer.length} bytes from Mega.nz`);
         
-        // Convert buffer to string
         const jsonString = buffer.toString('utf-8');
         logger.debug(`📄 File content preview: ${jsonString.substring(0, 100)}...`);
         
-        // Try to parse as JSON with BufferJSON.reviver for Baileys compatibility
         let rawData;
         try {
             rawData = JSON.parse(jsonString, BufferJSON.reviver);
         } catch (parseError) {
             logger.error('❌ JSON parsing failed:', parseError.message);
-            logger.debug('Raw content:', jsonString.substring(0, 500));
             throw new Error('Downloaded file is not valid JSON format');
         }
         
-        // Check if data is valid
         if (!rawData || typeof rawData !== 'object') {
             throw new Error('Downloaded file does not contain valid session object');
         }
@@ -48,97 +83,61 @@ async function downloadFromMega(megaUrl) {
         
         let sessionData;
         
-        // ENHANCED: Check if the data is already in the expected nested format
+        // Check if already in nested format
         if (rawData.creds && typeof rawData.creds === 'object') {
-            logger.info('✅ Found nested session format (creds object exists)');
+            logger.info('✅ Found nested session format');
             sessionData = rawData;
-            
-            // Validate nested format
-            const requiredFields = ['noiseKey', 'signedIdentityKey', 'registrationId'];
-            const missingFields = requiredFields.filter(field => !sessionData.creds[field]);
-            
-            if (missingFields.length > 0) {
-                logger.warn(`⚠️ Nested format missing some fields: ${missingFields.join(', ')}`);
-            } else {
-                logger.info('✅ All essential nested format fields present');
-            }
-            
         } else {
-            // ENHANCED: Handle flat format with better field detection
-            logger.info('🔍 Checking for flat session format...');
+            // Handle flat format
+            logger.info('🔍 Detected flat session format');
             
-            // Check for essential WhatsApp session fields at root level
-            const essentialFields = [
-                'noiseKey', 'signedIdentityKey', 'registrationId',
-                'advSecretKey', 'nextPreKeyId', 'firstUnuploadedPreKeyId'
-            ];
+            const essentialFields = ['noiseKey', 'signedIdentityKey', 'registrationId'];
+            const hasEssentials = essentialFields.every(field => rawData[field] !== undefined);
             
-            const foundEssentials = essentialFields.filter(field => 
-                rawData[field] !== undefined && rawData[field] !== null
-            );
-            
-            logger.info(`🔑 Found ${foundEssentials.length}/${essentialFields.length} essential fields at root level`);
-            logger.debug(`Found fields: ${foundEssentials.join(', ')}`);
-            
-            // Check for minimum required fields
-            const minimumRequired = ['noiseKey', 'signedIdentityKey', 'registrationId'];
-            const hasMinimum = minimumRequired.every(field => rawData[field] !== undefined);
-            
-            if (hasMinimum) {
-                logger.info('✅ Found flat session format with minimum required fields');
-                logger.info('🔄 Converting flat format to nested format...');
-                
-                // Create nested structure by wrapping everything in 'creds'
-                sessionData = {
-                    creds: { ...rawData }, // Copy all root-level data to creds
-                    keys: {} // Initialize empty keys object
-                };
-                
-                // Validate conversion
-                const postConversionMissing = minimumRequired.filter(field => !sessionData.creds[field]);
-                
-                if (postConversionMissing.length === 0) {
-                    logger.info('✅ Successfully converted flat format to nested format');
-                    logger.info(`📊 Converted session: ${Object.keys(sessionData.creds).length} credential fields`);
-                } else {
-                    throw new Error(`Conversion failed: still missing ${postConversionMissing.join(', ')}`);
-                }
-                
-            } else {
-                logger.error('❌ Session validation failed - missing essential WhatsApp fields');
-                logger.debug(`Available top-level keys: ${Object.keys(rawData).join(', ')}`);
-                logger.debug(`Missing required fields: ${minimumRequired.filter(f => !rawData[f]).join(', ')}`);
-                
-                // Try to identify what type of file this might be
-                const topKeys = Object.keys(rawData).slice(0, 10);
-                logger.debug(`Top-level structure preview: ${topKeys.join(', ')}`);
-                
-                if (rawData.contacts || rawData.chats) {
-                    throw new Error('File appears to be a chat backup, not session credentials');
-                } else if (rawData.version || rawData.type) {
-                    throw new Error('File appears to be a different type of WhatsApp data, not session credentials');
-                } else {
-                    throw new Error('File does not contain valid WhatsApp session credentials');
-                }
+            if (!hasEssentials) {
+                const missing = essentialFields.filter(field => !rawData[field]);
+                throw new Error(`Missing essential session fields: ${missing.join(', ')}`);
             }
+            
+            logger.info('🔄 Converting flat format to nested format...');
+            
+            // Create proper nested structure
+            sessionData = {
+                creds: { ...rawData },
+                keys: {}  // Will be converted to proper Map structure
+            };
+            
+            logger.info('✅ Successfully converted flat format to nested format');
         }
         
-        // Final validation of the session structure
+        // Ensure proper keys structure
+        if (!sessionData.keys || typeof sessionData.keys !== 'object') {
+            logger.info('📝 Initializing empty keys structure');
+            sessionData.keys = {};
+        }
+        
+        // Convert keys to Map if it's a plain object
+        if (sessionData.keys.constructor === Object) {
+            logger.info('🔄 Converting keys object to Map structure');
+            const keysMap = createKeysStructure();
+            
+            // Copy existing keys to Map
+            Object.entries(sessionData.keys).forEach(([key, value]) => {
+                keysMap.set(key, value);
+            });
+            
+            sessionData.keys = keysMap;
+        }
+        
+        // Validate session structure
         if (!sessionData.creds) {
             throw new Error('Session data missing creds object after processing');
         }
         
-        // Ensure keys object exists
-        if (!sessionData.keys) {
-            logger.info('📝 Initializing empty keys object');
-            sessionData.keys = {};
-        }
-        
-        // Enhanced session info logging
+        // Enhanced session info
         const phoneNumber = sessionData.creds.me?.id?.split(':')[0] || 'Unknown';
         const registered = sessionData.creds.registered;
-        const keyCount = Object.keys(sessionData.keys).length;
-        const advSecretKey = !!sessionData.creds.advSecretKey;
+        const keyCount = sessionData.keys.size || Object.keys(sessionData.keys).length || 0;
         const registrationId = sessionData.creds.registrationId;
         
         logger.info('✅ Session data processed successfully');
@@ -147,49 +146,26 @@ async function downloadFromMega(megaUrl) {
         logger.info(`   📋 Registered: ${registered}`);
         logger.info(`   🔑 Keys: ${keyCount}`);
         logger.info(`   🆔 Registration ID: ${registrationId}`);
-        logger.info(`   🔐 Advanced Security: ${advSecretKey ? 'Yes' : 'No'}`);
         
-        // Additional validation for common issues
+        // Additional validation
         if (!sessionData.creds.noiseKey) {
-            logger.warn('⚠️ Missing noiseKey - authentication may fail');
+            throw new Error('Missing noiseKey - authentication will fail');
         }
         
         if (!sessionData.creds.signedIdentityKey) {
-            logger.warn('⚠️ Missing signedIdentityKey - authentication may fail');
-        }
-        
-        if (typeof sessionData.creds.registrationId !== 'number') {
-            logger.warn('⚠️ registrationId is not a number - may cause issues');
+            throw new Error('Missing signedIdentityKey - authentication will fail');
         }
         
         return sessionData;
         
     } catch (error) {
         logger.error('❌ Mega.nz download failed:', error.message);
-        
-        // Enhanced error messages with specific guidance
-        if (error.message.includes('ENOTFOUND') || error.message.includes('network') || error.message.includes('getaddrinfo')) {
-            throw new Error('Network error: Could not connect to Mega.nz. Check your internet connection.');
-        } else if (error.message.includes('404') || error.message.includes('not found') || error.message.includes('File not found')) {
-            throw new Error('File not found: The Mega.nz file may have been deleted or the link is invalid.');
-        } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
-            throw new Error('Access denied: The Mega.nz file may be private or the key is incorrect.');
-        } else if (error.message.includes('JSON') || error.message.includes('parse')) {
-            throw new Error('Invalid session file: The downloaded file is not valid JSON session data.');
-        } else if (error.message.includes('credentials') || error.message.includes('creds')) {
-            throw new Error('Invalid session structure: The file does not contain valid WhatsApp credentials.');
-        } else if (error.message.includes('timeout')) {
-            throw new Error('Download timeout: Mega.nz is taking too long to respond. Try again later.');
-        } else if (error.message.includes('chat backup') || error.message.includes('different type')) {
-            throw new Error(`Wrong file type: ${error.message}`);
-        }
-        
         throw new Error(`Mega.nz download failed: ${error.message}`);
     }
 }
 
 /**
- * Handle Mega.nz session format: "prefix~fileId#decryptionKey"
+ * Handle Mega.nz session format with proper Baileys structure
  */
 async function handleMegaSession(sessionString) {
     try {
@@ -214,62 +190,50 @@ async function handleMegaSession(sessionString) {
         const cached = await loadCachedSession(prefix);
         if (cached) {
             logger.info('📦 Using cached Mega.nz session');
+            
+            // Ensure cached session has proper keys structure
+            if (cached.keys && cached.keys.constructor === Object) {
+                const keysMap = createKeysStructure();
+                Object.entries(cached.keys).forEach(([key, value]) => {
+                    keysMap.set(key, value);
+                });
+                cached.keys = keysMap;
+            }
+            
             return {
                 state: {
                     creds: cached.creds,
-                    keys: cached.keys || {}
+                    keys: cached.keys || createKeysStructure()
                 }
             };
         }
 
-        // Construct Mega.nz URL
         const megaUrl = `https://mega.nz/file/${fileId}#${decryptionKey}`;
         logger.info(`🔗 Mega URL: ${megaUrl}`);
         
-        // Download from Mega using enhanced downloader
         logger.info('⏳ Downloading WhatsApp session file from Mega.nz...');
         const sessionData = await downloadFromMega(megaUrl);
         
-        // Cache the session locally for faster future access
+        // Cache the session
         await cacheSession(sessionData, prefix);
         
         logger.info('✅ Mega.nz session processed successfully');
+        
         return {
             state: {
                 creds: sessionData.creds,
-                keys: sessionData.keys || {}
+                keys: sessionData.keys || createKeysStructure()
             }
         };
 
     } catch (error) {
         logger.error('Failed to handle Mega session:', error.message);
-        
-        // Add specific guidance for common Mega.nz issues
-        if (error.message.includes('File not found')) {
-            logger.error('💡 Mega.nz troubleshooting tips:');
-            logger.error('   • Check if the Mega.nz file still exists');
-            logger.error('   • Verify the file ID and decryption key are correct');
-            logger.error('   • Generate a new session if the file was deleted');
-            logger.error('   • Try visiting the Mega URL in your browser first');
-        } else if (error.message.includes('Network')) {
-            logger.error('💡 Network troubleshooting:');
-            logger.error('   • Check your internet connection');
-            logger.error('   • Verify your server can access mega.nz');
-            logger.error('   • Try again in a few minutes');
-            logger.error('   • Check if mega.nz is blocked in your region');
-        } else if (error.message.includes('Wrong file type')) {
-            logger.error('💡 File type troubleshooting:');
-            logger.error('   • Make sure you\'re using session credentials, not chat backups');
-            logger.error('   • Verify your session generator is working correctly');
-            logger.error('   • Try generating a fresh session');
-        }
-        
         throw error;
     }
 }
 
 /**
- * Convert session string to Baileys auth state - Enhanced version
+ * Main session string to auth conversion
  */
 export async function sessionStringToAuth(sessionString) {
     try {
@@ -277,7 +241,7 @@ export async function sessionStringToAuth(sessionString) {
             throw new Error('Invalid session string');
         }
 
-        // Check if it's a Mega.nz identifier format
+        // Check for Mega.nz format
         if (sessionString.includes('~')) {
             const parts = sessionString.split('~');
             if (parts.length === 2 && parts[1].includes('#')) {
@@ -286,7 +250,7 @@ export async function sessionStringToAuth(sessionString) {
             }
         }
 
-        // Handle traditional session string formats
+        // Handle direct session (fallback)
         return await handleDirectSession(sessionString);
 
     } catch (error) {
@@ -296,14 +260,13 @@ export async function sessionStringToAuth(sessionString) {
 }
 
 /**
- * Handle direct session string format: "prefix~base64data"
+ * Handle direct session string format
  */
 async function handleDirectSession(sessionString) {
     try {
         let sessionData;
         
         if (sessionString.includes('~')) {
-            // Format: "malvin~base64data"
             const parts = sessionString.split('~');
             if (parts.length !== 2) {
                 throw new Error('Invalid session string format. Expected format: "prefix~data"');
@@ -313,15 +276,12 @@ async function handleDirectSession(sessionString) {
             logger.debug(`Session prefix: ${prefix}`);
             
             try {
-                // Try to decode as base64
                 const decoded = Buffer.from(data, 'base64').toString();
                 sessionData = JSON.parse(decoded, BufferJSON.reviver);
             } catch (decodeError) {
-                // If base64 decode fails, try direct JSON parse
                 sessionData = JSON.parse(data, BufferJSON.reviver);
             }
         } else {
-            // Direct JSON string or base64 encoded JSON
             try {
                 sessionData = JSON.parse(sessionString, BufferJSON.reviver);
             } catch (directJsonError) {
@@ -330,16 +290,14 @@ async function handleDirectSession(sessionString) {
             }
         }
 
-        // Apply the same enhanced format detection as Mega sessions
         if (!sessionData || typeof sessionData !== 'object') {
             throw new Error('Session data is not a valid object');
         }
 
-        // Check for nested format first
+        // Check format and convert if needed
         if (sessionData.creds && typeof sessionData.creds === 'object') {
             logger.debug('Found nested session format in direct session');
         } else {
-            // Check for flat format
             const essentialFields = ['noiseKey', 'signedIdentityKey', 'registrationId'];
             const hasEssentials = essentialFields.every(field => sessionData[field] !== undefined);
             
@@ -354,9 +312,15 @@ async function handleDirectSession(sessionString) {
             }
         }
 
-        // Ensure keys object exists
+        // Ensure proper keys structure
         if (!sessionData.keys) {
-            sessionData.keys = {};
+            sessionData.keys = createKeysStructure();
+        } else if (sessionData.keys.constructor === Object) {
+            const keysMap = createKeysStructure();
+            Object.entries(sessionData.keys).forEach(([key, value]) => {
+                keysMap.set(key, value);
+            });
+            sessionData.keys = keysMap;
         }
 
         logger.debug('Direct session data structure validated');
@@ -364,7 +328,7 @@ async function handleDirectSession(sessionString) {
         return {
             state: {
                 creds: sessionData.creds,
-                keys: sessionData.keys || {}
+                keys: sessionData.keys
             }
         };
 
@@ -374,7 +338,7 @@ async function handleDirectSession(sessionString) {
 }
 
 /**
- * Cache session data locally for faster access
+ * Cache session with proper serialization
  */
 async function cacheSession(sessionData, prefix) {
     try {
@@ -383,19 +347,26 @@ async function cacheSession(sessionData, prefix) {
             fs.mkdirSync(cacheDir, { recursive: true });
         }
         
+        // Convert Map to object for JSON serialization
+        const cacheableData = {
+            creds: sessionData.creds,
+            keys: sessionData.keys instanceof Map ? 
+                Object.fromEntries(sessionData.keys) : 
+                sessionData.keys
+        };
+        
         const cacheFile = path.join(cacheDir, `${prefix}_cached.json`);
-        fs.writeFileSync(cacheFile, JSON.stringify(sessionData, BufferJSON.replacer, 2));
+        fs.writeFileSync(cacheFile, JSON.stringify(cacheableData, BufferJSON.replacer, 2));
         
         logger.debug(`💾 Session cached to: ${cacheFile}`);
         
     } catch (error) {
         logger.debug('Could not cache session:', error.message);
-        // Don't throw - caching is optional
     }
 }
 
 /**
- * Try to load cached session
+ * Load cached session with proper structure restoration
  */
 async function loadCachedSession(prefix) {
     try {
@@ -405,7 +376,7 @@ async function loadCachedSession(prefix) {
             return null;
         }
         
-        // Check if cache is recent (less than 1 hour old)
+        // Check cache age (1 hour limit)
         const stats = fs.statSync(cacheFile);
         const hourAgo = Date.now() - (60 * 60 * 1000);
         
@@ -417,6 +388,15 @@ async function loadCachedSession(prefix) {
         const cachedData = fs.readFileSync(cacheFile, 'utf-8');
         const sessionData = JSON.parse(cachedData, BufferJSON.reviver);
         
+        // Restore proper keys structure
+        if (sessionData.keys && sessionData.keys.constructor === Object) {
+            const keysMap = createKeysStructure();
+            Object.entries(sessionData.keys).forEach(([key, value]) => {
+                keysMap.set(key, value);
+            });
+            sessionData.keys = keysMap;
+        }
+        
         logger.info('✅ Using cached session data');
         return sessionData;
         
@@ -426,10 +406,7 @@ async function loadCachedSession(prefix) {
     }
 }
 
-/**
- * Rest of the session manager functions remain the same...
- */
-
+// Export other required functions
 export function validateSessionString(sessionString) {
     try {
         if (!sessionString || typeof sessionString !== 'string') {
@@ -444,7 +421,6 @@ export function validateSessionString(sessionString) {
             return { valid: false, error: 'Session string too short' };
         }
 
-        // Check for Mega.nz format
         if (sessionString.includes('~')) {
             const parts = sessionString.split('~');
             if (parts.length === 2 && parts[1].includes('#')) {
@@ -482,7 +458,6 @@ export async function getSessionInfo(sessionString) {
             };
         }
 
-        // For Mega sessions, we can't extract info without downloading
         if (validation.type === 'mega') {
             return {
                 hasCredentials: true,
@@ -494,13 +469,12 @@ export async function getSessionInfo(sessionString) {
             };
         }
 
-        // For direct sessions, try to extract info
         try {
             const authState = await sessionStringToAuth(sessionString);
             
             return {
                 hasCredentials: !!authState.state.creds,
-                hasKeys: !!authState.state.keys && Object.keys(authState.state.keys).length > 0,
+                hasKeys: !!authState.state.keys,
                 registered: !!authState.state.creds?.registered,
                 phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
                 type: validation.type
@@ -527,37 +501,11 @@ export async function getSessionInfo(sessionString) {
     }
 }
 
-/**
- * Convert Baileys auth state to session string
- */
-export function authToSessionString(authState, prefix = 'groq') {
-    try {
-        const sessionData = {
-            creds: authState.creds,
-            keys: authState.keys || {}
-        };
-
-        const jsonString = JSON.stringify(sessionData, BufferJSON.replacer);
-        const base64Data = Buffer.from(jsonString).toString('base64');
-        
-        return `${prefix}~${base64Data}`;
-
-    } catch (error) {
-        logger.error('Failed to convert auth state to session string:', error.message);
-        throw new Error(`Auth state conversion failed: ${error.message}`);
-    }
-}
-
-/**
- * Clean up and normalize session string
- */
 export function normalizeSessionString(sessionString) {
     if (!sessionString) return '';
     
-    // Remove whitespace
     sessionString = sessionString.trim();
     
-    // Remove quotes if wrapped
     if ((sessionString.startsWith('"') && sessionString.endsWith('"')) ||
         (sessionString.startsWith("'") && sessionString.endsWith("'"))) {
         sessionString = sessionString.slice(1, -1);
@@ -566,9 +514,6 @@ export function normalizeSessionString(sessionString) {
     return sessionString;
 }
 
-/**
- * Enhanced session testing with better error reporting
- */
 export async function testSession(sessionString) {
     try {
         logger.info('🧪 Testing session connectivity...');
@@ -580,32 +525,18 @@ export async function testSession(sessionString) {
             return { success: false, error: validation.error };
         }
         
-        if (validation.type === 'mega') {
-            logger.info('🔗 Testing Mega.nz download...');
-            const authState = await sessionStringToAuth(sessionString);
-            logger.info('✅ Mega.nz session download successful');
-            
-            return {
-                success: true,
-                type: 'mega',
-                hasCredentials: !!authState.state.creds,
-                phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
-                registrationId: authState.state.creds?.registrationId,
-                registered: authState.state.creds?.registered
-            };
-        } else {
-            const authState = await sessionStringToAuth(sessionString);
-            logger.info('✅ Direct session parsing successful');
-            
-            return {
-                success: true,
-                type: validation.type,
-                hasCredentials: !!authState.state.creds,
-                phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
-                registrationId: authState.state.creds?.registrationId,
-                registered: authState.state.creds?.registered
-            };
-        }
+        const authState = await sessionStringToAuth(sessionString);
+        logger.info(`✅ Session ${validation.type} parsing successful`);
+        
+        return {
+            success: true,
+            type: validation.type,
+            hasCredentials: !!authState.state.creds,
+            hasKeys: !!authState.state.keys,
+            phoneNumber: authState.state.creds?.me?.id?.split(':')[0] || 'Unknown',
+            registrationId: authState.state.creds?.registrationId,
+            registered: authState.state.creds?.registered
+        };
         
     } catch (error) {
         logger.error('❌ Session test failed:', error.message);
