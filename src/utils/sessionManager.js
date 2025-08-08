@@ -195,39 +195,77 @@ async function downloadFromMega(megaUrl) {
         logger.debug(`📄 File content preview: ${jsonString.substring(0, 100)}...`);
         
         // Try to parse as JSON with BufferJSON.reviver for Baileys compatibility
-        let sessionData;
+        let rawData;
         try {
-            sessionData = JSON.parse(jsonString, BufferJSON.reviver);
+            rawData = JSON.parse(jsonString, BufferJSON.reviver);
         } catch (parseError) {
             logger.error('❌ JSON parsing failed:', parseError.message);
             logger.debug('Raw content:', jsonString.substring(0, 500));
             throw new Error('Downloaded file is not valid JSON format');
         }
         
-        // Validate the downloaded session data structure
-        if (!sessionData || typeof sessionData !== 'object') {
+        // Check if data is valid
+        if (!rawData || typeof rawData !== 'object') {
             throw new Error('Downloaded file does not contain valid session object');
         }
         
+        let sessionData;
+        
+        // Check if the data is already in the expected format (nested under 'creds')
+        if (rawData.creds && typeof rawData.creds === 'object') {
+            logger.info('📋 Found nested session format (creds object exists)');
+            sessionData = rawData;
+        } else {
+            // Handle flat format - wrap everything in 'creds' object
+            logger.info('📋 Converting flat session format to nested format');
+            
+            // Check for essential WhatsApp session fields at root level
+            const essentialFields = ['noiseKey', 'signedIdentityKey', 'registrationId'];
+            const hasEssentials = essentialFields.some(field => rawData[field]);
+            
+            if (!hasEssentials) {
+                logger.error('❌ Session validation failed - missing essential WhatsApp fields');
+                logger.debug('Available top-level keys:', Object.keys(rawData));
+                throw new Error('Downloaded file does not contain valid WhatsApp session data');
+            }
+            
+            // Create nested structure
+            sessionData = {
+                creds: rawData,
+                keys: {} // Initialize empty keys object
+            };
+            
+            logger.info('✅ Successfully converted flat format to nested format');
+        }
+        
+        // Validate the final session data structure
         if (!sessionData.creds) {
-            logger.error('❌ Session validation failed - missing creds');
-            logger.debug('Available keys:', Object.keys(sessionData));
-            throw new Error('Downloaded file does not contain valid session credentials (missing creds)');
+            throw new Error('Session data missing creds object after processing');
         }
         
         // Check for required creds fields
-        if (!sessionData.creds.noiseKey || !sessionData.creds.signedIdentityKey) {
-            logger.warn('⚠️ Session may be incomplete - missing some required fields');
+        const requiredFields = ['noiseKey', 'signedIdentityKey', 'registrationId'];
+        const missingFields = requiredFields.filter(field => !sessionData.creds[field]);
+        
+        if (missingFields.length > 0) {
+            logger.warn(`⚠️ Session missing some fields: ${missingFields.join(', ')}`);
+        } else {
+            logger.info('✅ All essential session fields present');
         }
         
         // Ensure keys object exists
         if (!sessionData.keys) {
-            logger.info('📝 No keys found in session, initializing empty keys object');
+            logger.info('📝 Initializing empty keys object');
             sessionData.keys = {};
         }
         
-        logger.info('✅ Session data validated successfully');
-        logger.info(`📊 Session info: ${Object.keys(sessionData.keys).length} keys, registered: ${!!sessionData.creds.registered}`);
+        // Log session info
+        const phoneNumber = sessionData.creds.me?.id?.split(':')[0] || 'Unknown';
+        const registered = sessionData.creds.registered;
+        const keyCount = Object.keys(sessionData.keys).length;
+        
+        logger.info('✅ Session data processed successfully');
+        logger.info(`📊 Session info: Phone: ${phoneNumber}, Registered: ${registered}, Keys: ${keyCount}`);
         
         return sessionData;
         
