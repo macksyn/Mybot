@@ -1,312 +1,272 @@
-import { makeWASocket, DisconnectReason, BufferJSON, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { 
+    makeWASocket, 
+    DisconnectReason, 
+    useMultiFileAuthState, 
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore
+} from '@whiskeysockets/baileys';
 import { logger } from './utils/logger.js';
 import { config } from './config/config.js';
 import { MessageHandler } from './handlers/messageHandler.js';
-import { EventHandler } from './handlers/eventHandler.js';
-import fs from 'fs';
+import { sessionStringToAuth } from './utils/sessionManager.js';
+import fs from 'fs-extra';
 import path from 'path';
-import { sessionStringToAuth, authToSessionString, validateSessionString } from './utils/sessionManager.js';
 
 export async function createBot() {
     let authState;
     let saveCreds;
     
-    // Check if we have a session string or need to use file-based auth
-    if (config.SESSION_STRING && config.SESSION_STRING !== 'your-session-string-here') {
-        logger.info('🔑 Using session string authentication');
-        
-        // Validate session string first
-        const validation = validateSessionString(config.SESSION_STRING);
-        if (!validation.valid) {
-            logger.error(`❌ Session validation failed: ${validation.error}`);
-            throw new Error(`Invalid session string: ${validation.error}`);
-        }
-        
-        logger.info(`📝 Session Type: ${validation.type}`);
-        logger.info(`📝 Session Preview: ${config.SESSION_STRING.substring(0, 20)}...`);
-        
-        try {
-            // Convert session string to auth state (handles Mega.nz downloads)
-            if (validation.type === 'mega') {
-                logger.info('🔗 Processing Mega.nz session...');
-                logger.info('⏳ This may take a moment to download...');
-            }
-            
+    try {
+        // Setup authentication method
+        if (config.isUsingSessionString()) {
+            logger.info('🔑 Using session string authentication');
             authState = await sessionStringToAuth(config.SESSION_STRING);
-            logger.info('✅ Session string loaded successfully');
             
-            // Create a save function that can optionally convert back to session string
+            // Create save function for session string mode
             saveCreds = async () => {
                 try {
-                    // Save to session directory if persistence is enabled
-                    if (config.PERSIST_SESSIONS) {
-                        const sessionPath = path.join('./sessions', config.SESSION_ID);
-                        if (!fs.existsSync(sessionPath)) {
-                            fs.mkdirSync(sessionPath, { recursive: true });
-                        }
-                        
-                        // Save creds to file for backup
-                        const credsPath = path.join(sessionPath, 'creds.json');
-                        fs.writeFileSync(credsPath, JSON.stringify(authState.state.creds, BufferJSON.replacer, 2));
-                        logger.debug('💾 Session backed up to file');
-                    }
+                    // Save backup to local files if needed
+                    const sessionPath = config.getSessionPath();
+                    await fs.ensureDir(sessionPath);
+                    
+                    const credsPath = path.join(sessionPath, 'creds.json');
+                    await fs.writeJSON(credsPath, authState.state.creds, { spaces: 2 });
+                    
+                    logger.debug('💾 Session backup saved');
                 } catch (error) {
                     logger.debug('Could not save session backup:', error.message);
                 }
             };
             
-        } catch (error) {
-            logger.error('❌ Failed to load session string:', error.message);
+        } else {
+            logger.info('📁 Using file-based authentication');
             
-            // Provide specific error guidance
-            if (error.message.includes('Mega.nz')) {
-                logger.error('🔧 Mega.nz Session Issues:');
-                logger.error('   • Check your internet connection');
-                logger.error('   • Verify the Mega.nz link is still valid');
-                logger.error('   • Try generating a new session');
-                logger.error('   • Run: npm run test:session to debug');
-            } else if (error.message.includes('JSON') || error.message.includes('parse')) {
-                logger.error('🔧 Session Format Issues:');
-                logger.error('   • Session data may be corrupted');
-                logger.error('   • Generate a new session string');
-                logger.error('   • Check session generator output');
-            } else {
-                logger.error('🔧 Please check your SESSION_STRING in .env file');
-                logger.error('💡 Run: npm run test:session to validate');
+            const sessionPath = config.getSessionPath();
+            await fs.ensureDir(sessionPath);
+            
+            // Check if session files exist
+            const credsFile = path.join(sessionPath, 'creds.json');
+            if (!await fs.pathExists(credsFile)) {
+                throw new Error(`No session files found in ${sessionPath}. Please provide SESSION_STRING or session files.`);
             }
             
-            throw new Error(`Session loading failed: ${error.message}`);
+            const { state, saveCreds: fileSaveCreds } = await useMultiFileAuthState(sessionPath);
+            authState = { state };
+            saveCreds = fileSaveCreds;
         }
         
-    } else {
-        logger.info('📁 Using file-based session authentication');
+        // Get latest Baileys version
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        logger.info(`📱 Using Baileys v${version.join('.')}, latest: ${isLatest}`);
         
-        // Fall back to file-based authentication
-        const sessionPath = path.join('./sessions', config.SESSION_ID);
+        // Create WhatsApp socket
+        const sock = makeWASocket({
+            version,
+            auth: {
+                creds: authState.state.creds,
+                keys: makeCacheableSignalKeyStore(authState.state.keys, logger.child({ stream: 'keys' }))
+            },
+            printQRInTerminal: false, // We use session, no QR needed
+            browser: [config.BOT_NAME, 'Chrome', '119.0.0'],
+            logger: logger.child({ stream: 'baileys' }),
+            generateHighQualityLinkPreview: true,
+            defaultQueryTimeoutMs: 60000,
+            connectTimeoutMs: 30000,
+            keepAliveIntervalMs: 25000,
+            markOnlineOnConnect: true,
+            syncFullHistory: false,
+            fireInitQueries: false,
+            emitOwnEvents: false,
+            getMessage: async (key) => {
+                return { conversation: 'Hello from bot!' };
+            }
+        });
         
-        // Ensure session directory exists
-        if (!fs.existsSync(sessionPath)) {
-            fs.mkdirSync(sessionPath, { recursive: true });
-            logger.info(`Created session directory: ${sessionPath}`);
-        }
+        // Initialize message handler
+        const messageHandler = new MessageHandler(sock);
         
-        // Check if session files exist
-        const hasSession = fs.existsSync(path.join(sessionPath, 'creds.json'));
-        
-        if (!hasSession) {
-            logger.error('❌ No session found!');
-            logger.error(`📁 Looking for session in: ${sessionPath}`);
-            logger.error('🔧 Please either:');
-            logger.error('   1. Set SESSION_STRING in your .env file, OR');
-            logger.error('   2. Copy session files to the session directory');
-            logger.error('');
-            logger.error('💡 To get a session string:');
-            logger.error('   - Use your session generator');
-            logger.error('   - Get the session ID (like "Groq~fileId#key")');
-            logger.error('   - Set SESSION_STRING=your-session-string in .env');
-            logger.error('   - Run: npm run test:session to validate');
+        // Connection event handler
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
             
-            throw new Error('No session available. Please set SESSION_STRING or provide session files.');
-        }
-        
-        logger.info(`📁 Loading session from: ${sessionPath}`);
-        const { state, saveCreds: fileSaveCreds } = await useMultiFileAuthState(sessionPath);
-        authState = { state };
-        saveCreds = fileSaveCreds;
-    }
-    
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    
-    logger.info(`Using Baileys v${version.join('.')}, isLatest: ${isLatest}`);
-    logger.info(`🆔 Session ID: ${config.SESSION_ID}`);
-    
-    const sock = makeWASocket({
-        version,
-        auth: authState.state,
-        printQRInTerminal: false, // Disabled since we're using session
-        logger: logger.child({ module: 'baileys' }),
-        browser: ['Groq Bot', 'Chrome', '3.0.0'],
-        generateHighQualityLinkPreview: true,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
-        markOnlineOnConnect: true,
-        syncFullHistory: false,
-        emitOwnEvents: false,
-        getMessage: async (key) => {
-            return { conversation: 'Hello!' };
-        }
-    });
-    
-    // Initialize handlers
-    const messageHandler = new MessageHandler(sock);
-    const eventHandler = new EventHandler(sock);
-    
-    // Connection events
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            logger.warn('⚠️ QR code received - this should not happen with session-based auth');
-            logger.warn('🔧 This indicates the session might be invalid or expired');
-            logger.warn('💡 You may need to regenerate your session string');
-            logger.warn('🔗 Run: npm run test:session to validate your session');
-        }
-        
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            if (qr) {
+                logger.warn('⚠️  QR code generated - this should not happen with session auth');
+                logger.warn('💡 Your session might be invalid. Try generating a new one.');
+            }
             
-            logger.info('Connection closed due to:', lastDisconnect?.error);
-            logger.info('Status Code:', statusCode);
-            
-            if (statusCode === DisconnectReason.loggedOut) {
-                logger.error('❌ Session has been logged out remotely');
-                logger.error('🔧 You need to generate a new session string');
-                logger.error('💡 Use your session generator to get a new SESSION_STRING');
-                logger.error('🔗 After getting new session, run: npm run test:session');
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
                 
-                if (config.AUTO_RESTART_ON_LOGOUT) {
-                    logger.info('🔄 Auto-restart disabled for logged out sessions');
+                logger.info('🔌 Connection closed:', getDisconnectReason(statusCode));
+                
+                if (statusCode === DisconnectReason.loggedOut) {
+                    logger.error('❌ Bot has been logged out remotely');
+                    logger.error('🔧 You need to generate a new session string');
+                    
+                    if (config.SEND_STARTUP_MESSAGE && config.OWNER_NUMBER) {
+                        try {
+                            await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, {
+                                text: '🚨 *Bot Logged Out*\n\nThe bot has been logged out remotely. Please generate a new session string and restart the bot.'
+                            });
+                        } catch (error) {
+                            logger.debug('Could not send logout notification');
+                        }
+                    }
+                    
+                    process.exit(1);
+                } else if (shouldReconnect) {
+                    const delay = getReconnectDelay(statusCode);
+                    logger.info(`🔄 Reconnecting in ${delay}ms...`);
+                    setTimeout(() => createBot(), delay);
+                } else {
+                    logger.error('❌ Connection lost permanently');
+                    process.exit(1);
                 }
-                process.exit(1);
-            } else if (statusCode === DisconnectReason.restartRequired) {
-                logger.info('🔄 Restart required by WhatsApp');
-                setTimeout(() => createBot(), 3000);
-            } else if (statusCode === DisconnectReason.connectionClosed) {
-                logger.info('🔄 Connection closed, reconnecting in 5 seconds...');
-                setTimeout(() => createBot(), 5000);
-            } else if (statusCode === DisconnectReason.connectionLost) {
-                logger.info('🔄 Connection lost, reconnecting in 3 seconds...');
-                setTimeout(() => createBot(), 3000);
-            } else if (shouldReconnect) {
-                logger.info('🔄 Reconnecting in 5 seconds...');
-                setTimeout(() => createBot(), 5000);
-            } else {
-                logger.error('❌ Connection lost permanently');
-                logger.error('💡 Try regenerating your session if this persists');
-                process.exit(1);
-            }
-        } else if (connection === 'open') {
-            logger.info('✅ Connected to WhatsApp successfully!');
-            logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
-            logger.info(`🆔 Using Session: ${config.SESSION_ID}`);
-            
-            // Get bot's own number for logging
-            try {
-                const botNumber = sock.user?.id?.split(':')[0];
+            } else if (connection === 'open') {
+                logger.info('✅ Connected to WhatsApp successfully!');
+                logger.info(`🤖 ${config.BOT_NAME} is now online and ready!`);
+                
+                // Get bot info
+                const botNumber = sock.user?.id?.split(':')[0] || 'Unknown';
+                const botName = sock.user?.name || config.BOT_NAME;
+                
                 logger.info(`📱 Bot Number: ${botNumber}`);
+                logger.info(`👤 Bot Name: ${botName}`);
+                logger.info(`🔑 Auth Method: ${config.isUsingSessionString() ? 'Mega.nz Session' : 'File-based'}`);
                 
-                // Log successful auth method
-                const authMethod = config.SESSION_STRING && config.SESSION_STRING !== 'your-session-string-here' ? 
-                    (config.SESSION_STRING.includes('#') ? 'Mega.nz Session' : 'Session String') : 'Session Files';
-                logger.info(`🔑 Auth Method: ${authMethod}`);
-                
-            } catch (error) {
-                logger.debug('Could not extract bot number:', error.message);
-            }
-            
-            // Send startup message to owner
-            if (config.OWNER_NUMBER && config.SEND_STARTUP_MESSAGE) {
-                try {
-                    const authMethod = config.SESSION_STRING && config.SESSION_STRING !== 'your-session-string-here' ? 
-                        (config.SESSION_STRING.includes('#') ? 'Mega.nz Session' : 'Session String') : 'Session Files';
-                    
-                    const startupMessage = `🤖 *${config.BOT_NAME}* is now online!\n\n` +
-                                          `📅 Started: ${new Date().toLocaleString()}\n` +
-                                          `🆔 Session: ${config.SESSION_ID}\n` +
-                                          `🔑 Auth: ${authMethod}\n` +
-                                          `🔧 Prefix: ${config.PREFIX}\n` +
-                                          `🌐 Environment: ${config.NODE_ENV}\n` +
-                                          `⚡ Node.js: ${process.version}\n` +
-                                          `📱 Bot Number: ${sock.user?.id?.split(':')[0] || 'Unknown'}\n\n` +
-                                          `✅ All systems operational!\n` +
-                                          `Type ${config.PREFIX}help for commands.\n` +
-                                          `Type ${config.PREFIX}sessiontest to test session.`;
-                    
-                    await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, {
-                        text: startupMessage
-                    });
-                    logger.info('📨 Startup notification sent to owner');
-                } catch (error) {
-                    logger.warn('Could not send startup message to owner:', error.message);
+                // Send startup notification
+                if (config.SEND_STARTUP_MESSAGE && config.OWNER_NUMBER) {
+                    await sendStartupNotification(sock, botNumber, botName);
                 }
+                
+                // Set presence
+                await updatePresence(sock);
+            } else if (connection === 'connecting') {
+                logger.info('🔄 Connecting to WhatsApp...');
             }
-            
-            // Log session health
-            logSessionHealth();
-            
-        } else if (connection === 'connecting') {
-            const authMethod = config.SESSION_STRING && config.SESSION_STRING !== 'your-session-string-here' ? 
-                (config.SESSION_STRING.includes('#') ? 'Mega.nz session' : 'session string') : 'session files';
-            logger.info(`🔄 Connecting to WhatsApp using ${authMethod}...`);
-        }
-    });
-    
-    // Credentials update - save any session updates
-    sock.ev.on('creds.update', async () => {
-        try {
-            await saveCreds();
-            logger.debug('📄 Session credentials updated');
-        } catch (error) {
-            logger.error('Failed to save credentials:', error);
-        }
-    });
-    
-    // Message events
-    sock.ev.on('messages.upsert', async (messageUpdate) => {
-        await messageHandler.handle(messageUpdate);
-    });
-    
-    // Other events
-    sock.ev.on('group-participants.update', async (update) => {
-        await eventHandler.handleGroupUpdate(update);
-    });
-    
-    sock.ev.on('messages.reaction', async (reaction) => {
-        await eventHandler.handleReaction(reaction);
-    });
-    
-    // Presence update
-    setInterval(async () => {
-        try {
-            await sock.sendPresenceUpdate('available');
-        } catch (error) {
-            // Ignore presence update errors
-        }
-    }, 60000); // Update presence every minute
-    
-    return sock;
+        });
+        
+        // Credentials update handler
+        sock.ev.on('creds.update', async () => {
+            try {
+                await saveCreds();
+                logger.debug('🔄 Credentials updated');
+            } catch (error) {
+                logger.error('Failed to save credentials:', error);
+            }
+        });
+        
+        // Message handler
+        sock.ev.on('messages.upsert', async (messageUpdate) => {
+            try {
+                await messageHandler.handle(messageUpdate);
+            } catch (error) {
+                logger.error('Error handling messages:', error);
+            }
+        });
+        
+        // Presence updates
+        const presenceInterval = setInterval(async () => {
+            try {
+                await updatePresence(sock);
+            } catch (error) {
+                // Ignore presence update errors
+            }
+        }, 60000);
+        
+        // Cleanup on disconnect
+        sock.ev.on('connection.update', (update) => {
+            if (update.connection === 'close') {
+                clearInterval(presenceInterval);
+            }
+        });
+        
+        return sock;
+        
+    } catch (error) {
+        logger.error('❌ Failed to create bot:', error);
+        throw error;
+    }
 }
 
-// Helper function to log session health
-function logSessionHealth() {
+/**
+ * Send startup notification to owner
+ */
+async function sendStartupNotification(sock, botNumber, botName) {
     try {
-        if (config.SESSION_STRING && config.SESSION_STRING !== 'your-session-string-here') {
-            const sessionType = config.SESSION_STRING.includes('#') ? 'Mega.nz' : 'Direct';
-            logger.info(`📊 Session Health: Using ${sessionType} authentication`);
-            logger.debug(`Session string length: ${config.SESSION_STRING.length} characters`);
-            
-            if (sessionType === 'Mega.nz') {
-                logger.info('💡 Mega.nz sessions are cached locally for faster restarts');
-            }
-        } else {
-            const sessionPath = path.join('./sessions', config.SESSION_ID);
-            if (fs.existsSync(sessionPath)) {
-                const files = fs.readdirSync(sessionPath);
-                const sessionFiles = files.filter(file => 
-                    file.endsWith('.json') && 
-                    (file.startsWith('app-state-sync') || 
-                     file.startsWith('pre-key') || 
-                     file.startsWith('sender-key') || 
-                     file.startsWith('session') || 
-                     file === 'creds.json')
-                );
-                
-                logger.info(`📊 Session Health: ${sessionFiles.length} files loaded`);
-                logger.debug('Session files:', sessionFiles.join(', '));
-            }
-        }
+        const authMethod = config.isUsingSessionString() ? 'Mega.nz Session' : 'File-based';
+        const sessionInfo = config.getSessionInfo();
+        
+        const startupMessage = `🚀 *${config.BOT_NAME} Started Successfully!*\n\n` +
+                              `📅 *Startup Time:* ${new Date().toLocaleString('en-US', { timeZone: config.TIMEZONE })}\n` +
+                              `📱 *Bot Number:* ${botNumber}\n` +
+                              `👤 *Bot Name:* ${botName}\n` +
+                              `🆔 *Session ID:* ${config.SESSION_ID}\n` +
+                              `🔑 *Auth Method:* ${authMethod}\n` +
+                              `⚡ *Prefix:* ${config.PREFIX}\n` +
+                              `🌍 *Environment:* ${config.NODE_ENV}\n` +
+                              `🕐 *Timezone:* ${config.TIMEZONE}\n` +
+                              `📊 *Node.js:* ${process.version}\n\n` +
+                              `✨ *Features Enabled:*\n` +
+                              `• Weather: ${config.ENABLE_WEATHER ? '✅' : '❌'}\n` +
+                              `• Jokes: ${config.ENABLE_JOKES ? '✅' : '❌'}\n` +
+                              `• Quotes: ${config.ENABLE_QUOTES ? '✅' : '❌'}\n` +
+                              `• Calculator: ${config.ENABLE_CALCULATOR ? '✅' : '❌'}\n` +
+                              `• Admin Commands: ${config.ENABLE_ADMIN_COMMANDS ? '✅' : '❌'}\n\n` +
+                              `🎉 *All systems operational!*\n` +
+                              `Type *${config.PREFIX}help* to see available commands.`;
+        
+        await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, {
+            text: startupMessage
+        });
+        
+        logger.info('📨 Startup notification sent to owner');
     } catch (error) {
-        logger.warn('Could not check session health:', error.message);
+        logger.warn('Could not send startup notification:', error.message);
     }
+}
+
+/**
+ * Update bot presence
+ */
+async function updatePresence(sock) {
+    try {
+        await sock.sendPresenceUpdate('available');
+    } catch (error) {
+        // Ignore presence errors
+    }
+}
+
+/**
+ * Get human readable disconnect reason
+ */
+function getDisconnectReason(statusCode) {
+    const reasons = {
+        [DisconnectReason.badSession]: 'Bad Session',
+        [DisconnectReason.connectionClosed]: 'Connection Closed',
+        [DisconnectReason.connectionLost]: 'Connection Lost',
+        [DisconnectReason.connectionReplaced]: 'Connection Replaced',
+        [DisconnectReason.loggedOut]: 'Logged Out',
+        [DisconnectReason.restartRequired]: 'Restart Required',
+        [DisconnectReason.timedOut]: 'Timed Out',
+        [DisconnectReason.multideviceMismatch]: 'Multi-device Mismatch'
+    };
+    
+    return reasons[statusCode] || `Unknown (${statusCode})`;
+}
+
+/**
+ * Get reconnect delay based on disconnect reason
+ */
+function getReconnectDelay(statusCode) {
+    const delays = {
+        [DisconnectReason.connectionClosed]: 5000,
+        [DisconnectReason.connectionLost]: 3000,
+        [DisconnectReason.timedOut]: 10000,
+        [DisconnectReason.restartRequired]: 2000,
+        [DisconnectReason.badSession]: 15000
+    };
+    
+    return delays[statusCode] || 5000;
 }
