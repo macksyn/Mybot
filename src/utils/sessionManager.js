@@ -260,6 +260,49 @@ export async function sessionStringToAuth(sessionString) {
 }
 
 /**
+ * Convert auth state back to session string
+ */
+export function authToSessionString(authState) {
+    try {
+        if (!authState || !authState.creds) {
+            throw new Error('Invalid auth state: missing credentials');
+        }
+
+        // Create session data object
+        const sessionData = {
+            creds: authState.creds,
+            keys: {}
+        };
+
+        // Convert keys Map to plain object if needed
+        if (authState.keys instanceof Map) {
+            authState.keys.forEach((value, key) => {
+                sessionData.keys[key] = value;
+            });
+        } else if (authState.keys && typeof authState.keys === 'object') {
+            sessionData.keys = { ...authState.keys };
+        }
+
+        // Convert to JSON string with BufferJSON replacer
+        const jsonString = JSON.stringify(sessionData, BufferJSON.replacer);
+        
+        // Encode to base64
+        const base64String = Buffer.from(jsonString).toString('base64');
+        
+        // Create session string with prefix (you can customize the prefix)
+        const sessionString = `session~${base64String}`;
+        
+        logger.debug('✅ Successfully converted auth state to session string');
+        
+        return sessionString;
+        
+    } catch (error) {
+        logger.error('❌ Failed to convert auth state to session string:', error.message);
+        throw new Error(`Auth to session string conversion failed: ${error.message}`);
+    }
+}
+
+/**
  * Handle direct session string format
  */
 async function handleDirectSession(sessionString) {
