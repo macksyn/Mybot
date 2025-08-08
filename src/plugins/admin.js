@@ -1,148 +1,147 @@
-import { isAdmin, isOwner, formatFileSize } from '../utils/helpers.js';
 import { config } from '../config/config.js';
+import { formatDuration, getCurrentTime } from '../utils/helpers.js';
 
 export default {
     name: 'admin',
-    description: 'Admin commands for bot management',
-    usage: '!admin [subcommand]',
+    description: 'Admin control panel and system management',
+    usage: `${config.PREFIX}admin [action]`,
     category: 'admin',
+    adminOnly: true,
     
     async execute(context) {
-        const { reply, args, senderId, sock } = context;
+        const { reply, args, react, isOwner, isAdmin } = context;
         
-        // Check if user is admin or owner
-        if (!isAdmin(senderId) && !isOwner(senderId)) {
-            await reply('❌ You do not have permission to use admin commands.');
+        if (!isAdmin && !isOwner) {
+            await reply('🔒 *Access Denied*\n\nThis command requires administrator privileges.');
             return;
         }
         
-        if (args.length === 0) {
-            await this.showAdminMenu(reply);
-            return;
-        }
+        await react('⚙️');
         
-        const subcommand = args[0].toLowerCase();
-        const subArgs = args.slice(1);
+        const action = args[0]?.toLowerCase();
         
-        switch (subcommand) {
+        switch (action) {
             case 'status':
-                await this.showStatus(reply);
+            case 'info':
+                await this.showSystemStatus(context);
                 break;
+                
             case 'restart':
-                await this.restart(reply, senderId);
+                if (!isOwner) {
+                    await reply('🔒 *Owner Only*\n\nOnly the bot owner can restart the system.');
+                    return;
+                }
+                await this.restartBot(context);
                 break;
-            case 'broadcast':
-                await this.broadcast(reply, subArgs, sock, senderId);
-                break;
+                
             case 'stats':
-                await this.showStats(reply);
+                await this.showStats(context);
                 break;
+                
+            case 'session':
+                await this.showSessionInfo(context);
+                break;
+                
+            case 'config':
+                await this.showConfig(context);
+                break;
+                
             case 'help':
-                await this.showAdminMenu(reply);
+                await this.showAdminHelp(context);
                 break;
+                
             default:
-                await reply(`❌ Unknown admin command: *${subcommand}*\n\nUse *${config.PREFIX}admin help* to see available commands.`);
+                await this.showAdminPanel(context);
+                break;
         }
     },
     
-    async showAdminMenu(reply) {
-        const adminText = `⚙️ *Admin Panel*\n\n` +
-                         `📋 *Available Commands:*\n\n` +
-                         `• *status* - Show bot status\n` +
-                         `• *stats* - Show detailed statistics\n` +
-                         `• *restart* - Restart the bot\n` +
-                         `• *broadcast [message]* - Send message to all chats\n` +
-                         `• *help* - Show this menu\n\n` +
-                         `💡 *Usage:* ${config.PREFIX}admin [command]`;
+    async showAdminPanel(context) {
+        const { reply, isOwner } = context;
         
-        await reply(adminText);
-    },
-    
-    async showStatus(reply) {
-        const uptime = process.uptime();
-        const memory = process.memoryUsage();
+        let response = '⚙️ *Admin Control Panel*\n\n';
         
-        const days = Math.floor(uptime / 86400);
-        const hours = Math.floor((uptime % 86400) / 3600);
-        const minutes = Math.floor((uptime % 3600) / 60);
-        const seconds = Math.floor(uptime % 60);
+        response += '📊 *Available Actions:*\n';
+        response += `• ${config.PREFIX}admin status - System status\n`;
+        response += `• ${config.PREFIX}admin stats - Bot statistics\n`;
+        response += `• ${config.PREFIX}admin session - Session info\n`;
+        response += `• ${config.PREFIX}admin config - Configuration\n`;
+        response += `• ${config.PREFIX}admin help - Admin help\n`;
         
-        const statusText = `📊 *Bot Status*\n\n` +
-                          `🟢 *Status:* Online\n` +
-                          `⏱️ *Uptime:* ${days}d ${hours}h ${minutes}m ${seconds}s\n` +
-                          `💾 *Memory:* ${formatFileSize(memory.heapUsed)} / ${formatFileSize(memory.heapTotal)}\n` +
-                          `🔄 *Node.js:* ${process.version}\n` +
-                          `🌐 *Platform:* ${process.platform}\n` +
-                          `📅 *Started:* ${new Date(Date.now() - uptime * 1000).toLocaleString()}`;
-        
-        await reply(statusText);
-    },
-    
-    async showStats(reply) {
-        const stats = {
-            totalMemory: formatFileSize(process.memoryUsage().heapTotal),
-            usedMemory: formatFileSize(process.memoryUsage().heapUsed),
-            freeMemory: formatFileSize(process.memoryUsage().heapTotal - process.memoryUsage().heapUsed),
-            uptime: Math.floor(process.uptime()),
-            nodeVersion: process.version,
-            platform: process.platform,
-            arch: process.arch
-        };
-        
-        const statsText = `📊 *Detailed Statistics*\n\n` +
-                         `💾 *Memory Usage:*\n` +
-                         `• Total: ${stats.totalMemory}\n` +
-                         `• Used: ${stats.usedMemory}\n` +
-                         `• Free: ${stats.freeMemory}\n\n` +
-                         `⚙️ *System Info:*\n` +
-                         `• Node.js: ${stats.nodeVersion}\n` +
-                         `• Platform: ${stats.platform}\n` +
-                         `• Architecture: ${stats.arch}\n` +
-                         `• Uptime: ${Math.floor(stats.uptime / 3600)}h ${Math.floor((stats.uptime % 3600) / 60)}m\n\n` +
-                         `🔧 *Configuration:*\n` +
-                         `• Prefix: ${config.PREFIX}\n` +
-                         `• Environment: ${config.NODE_ENV}\n` +
-                         `• Rate Limit: ${config.MAX_COMMANDS_PER_MINUTE}/min`;
-        
-        await reply(statsText);
-    },
-    
-    async restart(reply, senderId) {
-        // Only owner can restart
-        if (!isOwner(senderId)) {
-            await reply('❌ Only the bot owner can restart the bot.');
-            return;
+        if (isOwner) {
+            response += `• ${config.PREFIX}admin restart - Restart bot\n`;
         }
         
-        await reply('🔄 Restarting bot... Please wait.');
+        response += '\n';
+        response += '🔧 *Quick System Info:*\n';
+        response += `• Uptime: ${formatDuration(process.uptime() * 1000)}\n`;
+        response += `• Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB\n`;
+        response += `• Node.js: ${process.version}\n`;
+        response += `• Environment: ${config.NODE_ENV}\n\n`;
         
-        // Give time for message to send
-        setTimeout(() => {
-            process.exit(0);
-        }, 2000);
+        response += '💡 Use specific commands above for detailed information.';
+        
+        await reply(response);
     },
     
-    async broadcast(reply, args, sock, senderId) {
-        // Only owner can broadcast
-        if (!isOwner(senderId)) {
-            await reply('❌ Only the bot owner can send broadcasts.');
-            return;
-        }
+    async showSystemStatus(context) {
+        const { reply } = context;
         
-        if (args.length === 0) {
-            await reply(`❓ Please provide a message to broadcast.\n\nExample: *${config.PREFIX}admin broadcast Hello everyone!*`);
-            return;
-        }
+        const uptime = process.uptime() * 1000;
+        const memUsage = process.memoryUsage();
         
-        const message = args.join(' ');
+        let response = '📊 *System Status Report*\n\n';
         
-        try {
-            // This is a simplified broadcast - in a real implementation,
-            // you would maintain a list of chats/groups to broadcast to
-            await reply(`📢 *Broadcast Message:*\n\n${message}\n\n⚠️ *Note:* Broadcast functionality needs to be implemented with a proper chat management system.`);
-            
-        } catch (error) {
-            await reply('❌ Error sending broadcast message.');
-        }
-    }
-};
+        // System Health
+        response += '🖥️ *System Health:*\n';
+        response += `• Status: 🟢 Operational\n`;
+        response += `• Uptime: ${formatDuration(uptime)}\n`;
+        response += `• CPU Usage: ${await getCpuUsage()}%\n`;
+        response += `• Platform: ${process.platform} (${process.arch})\n\n`;
+        
+        // Memory Usage
+        response += '💾 *Memory Usage:*\n';
+        response += `• Heap Used: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB\n`;
+        response += `• Heap Total: ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB\n`;
+        response += `• RSS: ${Math.round(memUsage.rss / 1024 / 1024)}MB\n`;
+        response += `• External: ${Math.round(memUsage.external / 1024 / 1024)}MB\n\n`;
+        
+        // Runtime Info
+        response += '⚙️ *Runtime Information:*\n';
+        response += `• Node.js: ${process.version}\n`;
+        response += `• Environment: ${config.NODE_ENV}\n`;
+        response += `• Process ID: ${process.pid}\n`;
+        response += `• Current Time: ${getCurrentTime()}\n\n`;
+        
+        // Health Check
+        const healthScore = calculateHealthScore(memUsage, uptime);
+        response += `🏥 *Health Score:* ${healthScore}/100\n`;
+        response += getHealthStatus(healthScore);
+        
+        await reply(response);
+    },
+    
+    async showStats(context) {
+        const { reply } = context;
+        
+        // Note: In a real implementation, you'd track these statistics
+        // For now, we'll show placeholder/calculated stats
+        
+        let response = '📈 *Bot Statistics*\n\n';
+        
+        response += '📊 *Usage Statistics:*\n';
+        response += `• Total Uptime: ${formatDuration(process.uptime() * 1000)}\n`;
+        response += `• Commands Executed: N/A (tracking disabled)\n`;
+        response += `• Messages Processed: N/A (tracking disabled)\n`;
+        response += `• Active Sessions: 1\n\n`;
+        
+        response += '🔧 *System Statistics:*\n';
+        response += `• Memory Peak: ${Math.round(process.memoryUsage().heapTotal / 1024 / 1024)}MB\n`;
+        response += `• Restart Count: N/A\n`;
+        response += `• Last Restart: Startup\n`;
+        response += `• Error Count: N/A\n\n`;
+        
+        response += '📱 *WhatsApp Statistics:*\n';
+        response += `• Connection Status: Connected\n`;
+        response += `• Session Type: ${config.isUsingSessionString() ? 'Mega.nz' : 'File-based'}\n`;
+        response += `• Auth Method: ${config.isUsingSessionString() ? 'Session String' :
