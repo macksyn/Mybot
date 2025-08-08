@@ -4,10 +4,45 @@ import { config } from '../config/config.js';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
-// Custom log format
-const logFormat = printf(({ level, message, timestamp, stack, module }) => {
+// Custom log format with proper object serialization
+const logFormat = printf(({ level, message, timestamp, stack, module, ...meta }) => {
     const modulePrefix = module ? `[${module}] ` : '';
-    return `${timestamp} ${level}: ${modulePrefix}${stack || message}`;
+    
+    // Handle different message types
+    let formattedMessage = '';
+    
+    if (stack) {
+        // Error with stack trace
+        formattedMessage = stack;
+    } else if (typeof message === 'object' && message !== null) {
+        // Object message - serialize it properly
+        try {
+            formattedMessage = JSON.stringify(message, (key, value) => {
+                // Handle Buffer objects
+                if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+                    return `[Buffer: ${value.data.length} bytes]`;
+                }
+                // Handle circular references
+                if (typeof value === 'object' && value !== null && value.constructor) {
+                    if (value.constructor.name === 'Object') return value;
+                    return `[${value.constructor.name}]`;
+                }
+                return value;
+            }, 2);
+        } catch (err) {
+            // Handle circular references or other JSON.stringify errors
+            formattedMessage = `[Object: ${message.constructor?.name || 'Unknown'}] ${message.toString()}`;
+        }
+    } else {
+        // String message
+        formattedMessage = message || '';
+    }
+    
+    // Add any additional metadata
+    const metaString = Object.keys(meta).length > 0 ? 
+        ` | Meta: ${JSON.stringify(meta)}` : '';
+    
+    return `${timestamp} ${level}: ${modulePrefix}${formattedMessage}${metaString}`;
 });
 
 // Create base transports
@@ -142,4 +177,35 @@ export const logger = winston.createLogger({
 // Helper function to create child loggers (proper implementation)
 export const createChildLogger = (moduleName) => {
     return logger.child({ module: moduleName });
+};
+
+// Add helper methods for better debugging
+logger.logObject = (level, message, obj) => {
+    logger[level](message, { object: obj });
+};
+
+// Special handler for Baileys logs to avoid [object Object]
+logger.baileys = (level, message, data) => {
+    if (typeof data === 'object' && data !== null) {
+        try {
+            const serialized = JSON.stringify(data, (key, value) => {
+                // Handle Buffer objects
+                if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+                    return `[Buffer: ${value.data.length} bytes]`;
+                }
+                // Handle circular references
+                if (typeof value === 'object' && value !== null) {
+                    if (value.constructor?.name) {
+                        return `[${value.constructor.name}]`;
+                    }
+                }
+                return value;
+            }, 2);
+            logger[level](`[baileys] ${message}: ${serialized}`);
+        } catch (err) {
+            logger[level](`[baileys] ${message}: [Complex Object - ${data.constructor?.name || 'Unknown'}]`);
+        }
+    } else {
+        logger[level](`[baileys] ${message}: ${data}`);
+    }
 };
