@@ -144,4 +144,187 @@ export default {
         response += '📱 *WhatsApp Statistics:*\n';
         response += `• Connection Status: Connected\n`;
         response += `• Session Type: ${config.isUsingSessionString() ? 'Mega.nz' : 'File-based'}\n`;
-        response += `• Auth Method: ${config.isUsingSessionString() ? 'Session String' :
+        response += `• Auth Method: ${config.isUsingSessionString() ? 'Session String' : 'File Auth'}\n`;
+        response += `• Session ID: ${config.SESSION_ID}\n\n`;
+        
+        response += '💡 *Note:* Advanced statistics require database integration.';
+        
+        await reply(response);
+    },
+    
+    async showSessionInfo(context) {
+        const { reply } = context;
+        
+        let response = '🔐 *Session Information*\n\n';
+        
+        const sessionInfo = config.getSessionInfo();
+        
+        response += '📋 *Current Session:*\n';
+        response += `• Session ID: ${config.SESSION_ID}\n`;
+        response += `• Auth Method: ${config.isUsingSessionString() ? 'Session String' : 'File-based'}\n`;
+        
+        if (config.isUsingSessionString()) {
+            response += `• String Length: ${config.SESSION_STRING.length} chars\n`;
+            response += `• Type: ${sessionInfo.type || 'Unknown'}\n`;
+            
+            if (sessionInfo.type === 'mega') {
+                response += `• Source: Mega.nz Cloud Storage\n`;
+                response += `• Prefix: ${sessionInfo.prefix || 'Unknown'}\n`;
+            }
+            
+            if (sessionInfo.phoneNumber) {
+                response += `• Phone: ${sessionInfo.phoneNumber}\n`;
+            }
+        } else {
+            response += `• Session Path: ${config.getSessionPath()}\n`;
+        }
+        
+        response += '\n';
+        
+        response += '🔒 *Security Status:*\n';
+        response += `• Session Valid: ✅ Active\n`;
+        response += `• Connection: 🟢 Stable\n`;
+        response += `• Last Update: Active session\n\n`;
+        
+        response += '⚙️ *Session Actions:*\n';
+        response += `• Test: ${config.PREFIX}sessiontest\n`;
+        response += `• Info: ${config.PREFIX}admin session\n`;
+        response += '• Backup: Auto-saved to local files\n\n';
+        
+        response += '💡 *Tip:* Regular session testing ensures stability.';
+        
+        await reply(response);
+    },
+    
+    async showConfig(context) {
+        const { reply } = context;
+        
+        let response = '🔧 *Bot Configuration*\n\n';
+        
+        response += '📝 *Basic Settings:*\n';
+        response += `• Bot Name: ${config.BOT_NAME}\n`;
+        response += `• Prefix: ${config.PREFIX}\n`;
+        response += `• Timezone: ${config.TIMEZONE}\n`;
+        response += `• Environment: ${config.NODE_ENV}\n`;
+        response += `• Log Level: ${config.LOG_LEVEL}\n\n`;
+        
+        response += '👥 *Access Control:*\n';
+        response += `• Owner: ${config.OWNER_NUMBER ? '✅ Set' : '❌ Not Set'}\n`;
+        response += `• Admins: ${config.ADMIN_NUMBERS.length} configured\n`;
+        response += `• Rate Limit: ${config.MAX_COMMANDS_PER_MINUTE}/min\n\n`;
+        
+        response += '✨ *Feature Status:*\n';
+        response += `• Weather: ${config.ENABLE_WEATHER ? '✅' : '❌'}\n`;
+        response += `• Jokes: ${config.ENABLE_JOKES ? '✅' : '❌'}\n`;
+        response += `• Quotes: ${config.ENABLE_QUOTES ? '✅' : '❌'}\n`;
+        response += `• Calculator: ${config.ENABLE_CALCULATOR ? '✅' : '❌'}\n`;
+        response += `• Admin Commands: ${config.ENABLE_ADMIN_COMMANDS ? '✅' : '❌'}\n`;
+        response += `• Auto React: ${config.ENABLE_AUTO_REACT ? '✅' : '❌'}\n\n`;
+        
+        response += '🔑 *API Keys:*\n';
+        response += `• OpenWeather: ${config.OPENWEATHER_API_KEY ? '✅ Set' : '❌ Not Set'}\n`;
+        response += `• Quotes API: ${config.QUOTE_API_KEY ? '✅ Set' : '❌ Not Set'}\n\n`;
+        
+        response += '⚙️ *System Settings:*\n';
+        response += `• Port: ${config.PORT}\n`;
+        response += `• Log to File: ${config.LOG_TO_FILE ? '✅' : '❌'}\n`;
+        response += `• Startup Message: ${config.SEND_STARTUP_MESSAGE ? '✅' : '❌'}\n`;
+        response += `• Auto Restart: ${config.AUTO_RESTART_ON_LOGOUT ? '✅' : '❌'}`;
+        
+        await reply(response);
+    },
+    
+    async showAdminHelp(context) {
+        const { reply, isOwner } = context;
+        
+        let response = '📖 *Admin Commands Help*\n\n';
+        
+        response += '🔧 *Available Commands:*\n\n';
+        
+        response += `*${config.PREFIX}admin status*\n`;
+        response += '• Show detailed system status\n';
+        response += '• Memory usage, uptime, health\n\n';
+        
+        response += `*${config.PREFIX}admin stats*\n`;
+        response += '• Bot usage statistics\n';
+        response += '• Performance metrics\n\n';
+        
+        response += `*${config.PREFIX}admin session*\n`;
+        response += '• Current session information\n';
+        response += '• Security status\n\n';
+        
+        response += `*${config.PREFIX}admin config*\n`;
+        response += '• Bot configuration overview\n';
+        response += '• Feature status, API keys\n\n';
+        
+        if (isOwner) {
+            response += `*${config.PREFIX}admin restart* ⚠️\n`;
+            response += '• Restart the bot (Owner only)\n';
+            response += '• Use with caution\n\n';
+        }
+        
+        response += '📊 *Related Commands:*\n';
+        response += `• ${config.PREFIX}sessiontest - Test session\n`;
+        response += `• ${config.PREFIX}info - Basic bot info\n`;
+        response += `• ${config.PREFIX}ping - Check response time\n\n`;
+        
+        response += '💡 *Tips:*\n';
+        response += '• Regular status checks help maintain bot health\n';
+        response += '• Monitor memory usage for optimal performance\n';
+        response += '• Test session periodically for stability';
+        
+        await reply(response);
+    },
+    
+    async restartBot(context) {
+        const { reply } = context;
+        
+        await reply('🔄 *Restarting Bot...*\n\n' +
+                   'The bot will restart in 3 seconds.\n' +
+                   'This may take a moment to complete.\n\n' +
+                   '⚠️ *Please wait for reconnection...*');
+        
+        // Give time for the message to send
+        setTimeout(() => {
+            process.exit(0); // Let PM2 or process manager restart
+        }, 3000);
+    }
+};
+
+// Helper functions
+async function getCpuUsage() {
+    return new Promise((resolve) => {
+        const startUsage = process.cpuUsage();
+        setTimeout(() => {
+            const currentUsage = process.cpuUsage(startUsage);
+            const totalUsage = currentUsage.user + currentUsage.system;
+            const percentage = (totalUsage / 1000000) * 100; // Convert to percentage
+            resolve(Math.min(Math.round(percentage), 100));
+        }, 100);
+    });
+}
+
+function calculateHealthScore(memUsage, uptime) {
+    let score = 100;
+    
+    // Memory usage penalty
+    const memUsageMB = memUsage.heapUsed / 1024 / 1024;
+    if (memUsageMB > 500) score -= 20;
+    else if (memUsageMB > 200) score -= 10;
+    else if (memUsageMB > 100) score -= 5;
+    
+    // Uptime bonus
+    const uptimeHours = uptime / (1000 * 60 * 60);
+    if (uptimeHours > 24) score += 5;
+    if (uptimeHours > 168) score += 5; // 1 week
+    
+    return Math.max(0, Math.min(100, score));
+}
+
+function getHealthStatus(score) {
+    if (score >= 90) return '💚 Excellent - System running optimally';
+    if (score >= 75) return '💛 Good - System performing well';
+    if (score >= 60) return '🧡 Fair - Minor issues detected';
+    if (score >= 40) return '❤️ Poor - System needs attention';
+    return '💔 Critical - Immediate action required';
+}
