@@ -14,26 +14,43 @@ const customFormat = printf(({ level, message, timestamp, stack, module, ...meta
     
     if (stack) {
         formattedMessage = stack;
-    } else if (typeof message === 'object') {
+    } else if (typeof message === 'object' && message !== null) {
         try {
-            formattedMessage = JSON.stringify(message, (key, value) => {
-                if (value && value.type === 'Buffer') {
-                    return `[Buffer: ${value.data?.length || 0} bytes]`;
-                }
-                if (typeof value === 'object' && value !== null && value.constructor?.name !== 'Object') {
-                    return `[${value.constructor.name}]`;
-                }
-                return value;
-            }, 2);
-        } catch {
-            formattedMessage = message.toString();
+            // Handle special Baileys object formats
+            if (message.msg && typeof message.msg === 'string') {
+                formattedMessage = message.msg;
+            } else if (message.message && typeof message.message === 'string') {
+                formattedMessage = message.message;
+            } else {
+                formattedMessage = JSON.stringify(message, (key, value) => {
+                    if (value && value.type === 'Buffer') {
+                        return `[Buffer: ${value.data?.length || 0} bytes]`;
+                    }
+                    if (typeof value === 'object' && value !== null && value.constructor?.name !== 'Object') {
+                        return `[${value.constructor.name}]`;
+                    }
+                    return value;
+                }, 2);
+            }
+        } catch (error) {
+            formattedMessage = String(message);
         }
     } else {
-        formattedMessage = message || '';
+        formattedMessage = String(message || '');
     }
     
+    // Clean up meta to avoid the weird character indexing issue
+    const cleanMeta = {};
+    Object.keys(meta).forEach(key => {
+        const value = meta[key];
+        // Skip numeric string keys (like "0", "1", "2", etc.) that cause the character indexing
+        if (!key.match(/^\d+$/)) {
+            cleanMeta[key] = value;
+        }
+    });
+    
     // Add metadata if present
-    const metaStr = Object.keys(meta).length > 0 ? ` ${JSON.stringify(meta)}` : '';
+    const metaStr = Object.keys(cleanMeta).length > 0 ? ` ${JSON.stringify(cleanMeta)}` : '';
     
     return `${timestamp} ${level}: ${modulePrefix}${formattedMessage}${metaStr}`;
 });
@@ -124,42 +141,111 @@ export const logger = winston.createLogger({
     ]
 });
 
-// Create child logger function
-export const createChildLogger = (moduleName) => {
-    return logger.child({ module: moduleName });
-};
-
 // Enhanced logging methods
 logger.success = (message, ...args) => logger.info(`✅ ${message}`, ...args);
 logger.error = (message, ...args) => logger.log('error', `❌ ${message}`, ...args);
 logger.warn = (message, ...args) => logger.log('warn', `⚠️  ${message}`, ...args);
 logger.debug = (message, ...args) => logger.log('debug', `🔍 ${message}`, ...args);
+logger.trace = (message, ...args) => logger.log('debug', `🔬 ${message}`, ...args);
 
 // Special handler for objects
 logger.logObject = (level, message, obj) => {
     logger[level](`${message}:`, obj);
 };
 
-// Handle Baileys logs properly
-logger.child = (options) => {
-    const childLogger = winston.createLogger({
-        level: logger.level,
-        format: logger.format,
-        transports: logger.transports,
-        parent: logger
+// Override the child method to work properly with Winston
+logger.child = (options = {}) => {
+    // Create a proper child logger that inherits configuration
+    const childLogger = Object.create(logger);
+    
+    // Store the module/stream info
+    const moduleInfo = options.module || options.stream || 'baileys';
+    
+    // Override logging methods to include module info
+    const logLevels = ['error', 'warn', 'info', 'debug', 'verbose', 'trace'];
+    
+    logLevels.forEach(level => {
+        childLogger[level] = (message, meta = {}) => {
+            // Handle Baileys format: { level, msg, ...data }
+            if (typeof message === 'object' && message !== null && message.level && message.msg) {
+                const logLevel = message.level === 'trace' ? 'debug' : (message.level || 'info');
+                return logger[logLevel](message.msg, { 
+                    module: moduleInfo, 
+                    ...message 
+                });
+            } 
+            // Handle objects with message property
+            else if (typeof message === 'object' && message !== null && message.message) {
+                const logLevel = level === 'trace' ? 'debug' : level;
+                return logger[logLevel](message.message, { 
+                    module: moduleInfo, 
+                    ...meta 
+                });
+            }
+            // Handle regular objects
+            else if (typeof message === 'object' && message !== null) {
+                const logLevel = level === 'trace' ? 'debug' : level;
+                try {
+                    const messageStr = JSON.stringify(message);
+                    return logger[logLevel](messageStr, { 
+                        module: moduleInfo, 
+                        ...meta 
+                    });
+                } catch (error) {
+                    return logger[logLevel](String(message), { 
+                        module: moduleInfo, 
+                        ...meta 
+                    });
+                }
+            } 
+            // Handle regular messages
+            else {
+                const logLevel = level === 'trace' ? 'debug' : level;
+                return logger[logLevel](String(message), { 
+                    module: moduleInfo, 
+                    ...meta 
+                });
+            }
+        };
     });
     
-    // Override log method to handle Baileys format
-    const originalLog = childLogger.log;
-    childLogger.log = function(level, message, meta) {
-        if (typeof level === 'object') {
+    // Handle the log method specifically for Baileys
+    childLogger.log = function(levelOrObject, message, meta = {}) {
+        if (typeof levelOrObject === 'object' && levelOrObject !== null) {
             // Baileys format: log({ level, msg, ...data })
-            const { level: logLevel, msg, ...data } = level;
-            return originalLog.call(this, logLevel || 'info', msg, { module: options.module || options.stream, ...data });
+            const { level, msg, message: objMessage, ...data } = levelOrObject;
+            const logLevel = level === 'trace' ? 'debug' : (level || 'info');
+            const finalMessage = msg || objMessage || JSON.stringify(levelOrObject);
+            
+            return logger.log(logLevel, finalMessage, { 
+                module: moduleInfo, 
+                ...data 
+            });
         } else {
-            return originalLog.call(this, level, message, { module: options.module || options.stream, ...meta });
+            // Map trace to debug for Winston
+            const logLevel = levelOrObject === 'trace' ? 'debug' : levelOrObject;
+            
+            // Handle object messages
+            let finalMessage = message;
+            if (typeof message === 'object' && message !== null) {
+                try {
+                    finalMessage = message.message || JSON.stringify(message);
+                } catch (error) {
+                    finalMessage = String(message);
+                }
+            }
+            
+            return logger.log(logLevel, String(finalMessage), { 
+                module: moduleInfo, 
+                ...meta 
+            });
         }
     };
     
     return childLogger;
+};
+
+// Create child logger function - single implementation
+export const createChildLogger = (moduleName) => {
+    return logger.child({ module: moduleName });
 };
